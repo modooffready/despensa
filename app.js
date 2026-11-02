@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -67,6 +67,8 @@ let pendientesCache = [];
 let vistaStock = 'producto';
 let tipoLista = 'CATEGORIA';
 let stockFiltrado = true;
+let resincronizar = false;
+let ignorarCodigo = '', ignorarHasta = 0; // evita releer el producto anterior en la ráfaga
 
 const $ = function (id) { return document.getElementById(id); };
 function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -87,7 +89,7 @@ function toast(msg, ms) {
 }
 
 function mostrar(nombre) {
-  ['inicio', 'escaner', 'formulario', 'ajustes', 'stock'].forEach(function (p) {
+  ['inicio', 'escaner', 'formulario', 'ajustes', 'stock', 'buscar'].forEach(function (p) {
     $('pantalla-' + p).classList.toggle('oculto', p !== nombre);
   });
   if (nombre !== 'escaner') pararEscaner();
@@ -155,6 +157,7 @@ async function iniciar() {
   window.addEventListener('offline', refrescarEstado);
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') sincronizar(false);
+    else if (!$('pantalla-escaner').classList.contains('oculto')) mostrar('inicio'); // no dejar la cámara encendida
   });
   setInterval(function () { sincronizar(false); }, 120000);
 }
@@ -185,9 +188,12 @@ function enlazarEventos() {
   $('btn-sincronizar').onclick = function () { sincronizar(true); };
   $('btn-escanear').onclick = abrirEscaner;
   $('btn-stock').onclick = abrirStock;
-  $('btn-sin-codigo').onclick = function () { abrirFormulario(codigoInterno(), { sinCodigo: true }); };
+  $('btn-buscar').onclick = abrirBuscar;
+  $('b-buscar').oninput = pintarBuscar;
+  $('b-nuevo').onclick = function () { abrirFormulario(codigoInterno(), { sinCodigo: true, nombre: $('b-buscar').value.trim() }); };
+  $('b-volver').onclick = function () { mostrar('inicio'); };
   $('btn-codigo-manual').onclick = function () {
-    const c = $('codigo-manual').value.trim();
+    const c = normalizarCodigo($('codigo-manual').value);
     if (!c) { toast('Escribe un código'); return; }
     $('codigo-manual').value = '';
     abrirFormulario(c);
@@ -277,7 +283,7 @@ async function pintarHistorial() {
   lista.innerHTML = h.slice(0, 25).map(function (m) {
     const icono = m.estado === 'ok' ? '✅' : (m.estado === 'pendiente' ? '⏳' : '⚠️');
     return '<li><div><span class="tag ' + esc(m.tipo) + '">' + esc(m.tipo) + '</span> ' +
-      esc(m.cantidad) + ' × ' + esc(nombreDe(m.codigo) || m.nombre) +
+      esc(m.cantidad) + ' × ' + esc((catalogo[m.codigo] && catalogo[m.codigo].nombre) || m.nombre || m.codigo) +
       '<div class="meta">' + esc(m.caducidad || 'sin cad.') + ' · ' + esc(m.almacen) + (m.estante ? ' · ' + esc(m.estante) : '') +
       ' · ' + new Date(m.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) +
       (m.estado !== 'ok' && m.estado !== 'pendiente' ? '<br><span class="error">' + esc(m.estado) + '</span>' : '') +
@@ -290,8 +296,15 @@ async function marcarHistorial(id, estado) {
   if (m) { m.estado = estado; await idb.poner('historial', m); }
 }
 
+/* ---------- Códigos ---------- */
+// Quita espacios y guiones; un UPC-A de 12 cifras se guarda como su EAN-13 (con 0 delante)
+function normalizarCodigo(c) {
+  c = String(c || '').trim().replace(/[\s-]/g, '');
+  return /^\d{12}$/.test(c) ? '0' + c : c;
+}
+
 /* ---------- Escáner ---------- */
-let stream = null, detector = null, escaneando = false, linterna = false;
+let stream = null, detector = null, escaneando = false, linterna = false, generacion = 0;
 
 async function abrirEscaner() {
   if (!('BarcodeDetector' in window)) {
@@ -318,22 +331,24 @@ async function abrirEscaner() {
     const caps = pista.getCapabilities ? pista.getCapabilities() : {};
     $('btn-linterna').classList.toggle('oculto', !caps.torch);
     escaneando = true;
-    bucleEscaneo();
+    bucleEscaneo(++generacion); // cada apertura tiene su propio bucle; los anteriores se paran solos
   } catch (e) {
     console.error(e);
     $('txt-escaner').textContent = 'No se pudo abrir la cámara: ' + e.message + '. Revisa los permisos de cámara.';
   }
 }
 
-async function bucleEscaneo() {
-  if (!escaneando) return;
+async function bucleEscaneo(gen) {
+  if (!escaneando || gen !== generacion) return;
   const video = $('video');
   try {
     if (video.readyState >= 2) {
       const codigos = await detector.detect(video);
       if (codigos.length && escaneando) {
-        const valor = String(codigos[0].rawValue || '').trim();
-        if (valor) {
+        const valor = normalizarCodigo(codigos[0].rawValue);
+        if (valor === ignorarCodigo && Date.now() < ignorarHasta) {
+          $('txt-escaner').textContent = 'Retira el producto anterior y enfoca el siguiente';
+        } else if (valor) {
           if (navigator.vibrate) navigator.vibrate(120);
           pararEscaner();
           abrirFormulario(valor);
@@ -342,7 +357,7 @@ async function bucleEscaneo() {
       }
     }
   } catch (e) { console.warn(e); }
-  setTimeout(bucleEscaneo, 150);
+  setTimeout(function () { bucleEscaneo(gen); }, 150);
 }
 
 function pararEscaner() {
@@ -377,7 +392,7 @@ async function abrirFormulario(codigo, opciones_) {
   $('f-codigo').textContent = actual.sinCodigo ? 'Sin código de barras (' + codigo + ')' : codigo;
 
   // Ficha del producto
-  $('p-nombre').value = p.nombre || '';
+  $('p-nombre').value = p.nombre || op.nombre || '';
   $('p-marca').value = p.marca || '';
   $('p-contenido').value = p.contenido === undefined || p.contenido === null ? '' : p.contenido;
   $('p-unidad').value = p.unidad || 'uds';
@@ -403,11 +418,11 @@ async function abrirFormulario(codigo, opciones_) {
   const total = lotesDe(codigo).reduce(function (s, l) { return s + l.stock; }, 0);
   $('f-stock').textContent = actual.existe ? 'En stock (según el último dato): ' + total : '';
 
-  cambiarTipo('ENTRADA');
+  cambiarTipo(op.salida ? 'SALIDA' : 'ENTRADA');
   mostrar('formulario');
   pintarFoto();
   $('f-off').textContent = '';
-  if (actual.sinCodigo && !p.nombre) setTimeout(function () { $('p-nombre').focus(); }, 100);
+  if (actual.sinCodigo && !p.nombre) { pintarCategoriasFicha(); setTimeout(function () { $('p-nombre').focus(); }, 100); }
   if (!actual.sinCodigo && !p.nombre) consultarOFF(codigo);
 }
 
@@ -836,6 +851,19 @@ async function guardarMovimiento(seguir) {
   const cantidad = parseInt($('f-cantidad').value, 10);
   if (!cantidad || cantidad < 1) { toast('La cantidad debe ser 1 o más'); return; }
   if (cadAnio && !cadMes) { toast('Elige también el mes de caducidad'); return; }
+  const almacen = $('f-almacen').value;
+  const estante = $('f-estante-caja').classList.contains('oculto') ? '' : $('f-estante').value;
+  const caducidad = cadAnio ? cadAnio + '-' + cadMes : '';
+  if (tipoActual === 'SALIDA') {
+    // No dejar sacar más de lo que hay en ese lote (evita stock negativo)
+    pendientesCache = await idb.todos('pendientes');
+    const lote = lotesDe(actual.codigo).find(function (l) {
+      return (l.caducidad || '') === caducidad && (l.almacen || '') === almacen && (l.estante || '') === estante;
+    });
+    const hay = lote ? lote.stock : 0;
+    if (!hay) { toast('No consta stock de ese lote aquí. Si lo hay de verdad, registra antes la entrada.', 4500); return; }
+    if (cantidad > hay) { toast('En ese lote solo constan ' + hay + ' uds.', 4000); return; }
+  }
   if (!(await guardarFicha())) return;
 
   const mov = {
@@ -845,9 +873,9 @@ async function guardarMovimiento(seguir) {
     tipo: tipoActual,
     codigo: actual.codigo,
     cantidad: cantidad,
-    caducidad: cadAnio ? cadAnio + '-' + cadMes : '',
-    almacen: $('f-almacen').value,
-    estante: $('f-estante-caja').classList.contains('oculto') ? '' : $('f-estante').value,
+    caducidad: caducidad,
+    almacen: almacen,
+    estante: estante,
     nota: $('f-nota').value.trim()
   };
   await idb.poner('pendientes', mov);
@@ -863,7 +891,7 @@ async function guardarMovimiento(seguir) {
   await guardarAjustesLocales();
 
   toast((mov.tipo === 'ENTRADA' ? 'Entrada' : 'Salida') + ' guardada: ' + cantidad + ' × ' + nombreDe(mov.codigo));
-  if (seguir) abrirEscaner(); else mostrar('inicio');
+  if (seguir) { ignorarCodigo = mov.codigo; ignorarHasta = Date.now() + 3000; abrirEscaner(); } else mostrar('inicio');
   await refrescarEstado();
   await pintarHistorial();
   sincronizar(false);
@@ -975,6 +1003,38 @@ function pintarStock() {
   }
   $('s-lista').innerHTML = html;
   cada($('s-lista').querySelectorAll('.prod'), function (d) {
+    d.onclick = function () { abrirFormulario(d.dataset.c, { salida: true }); };
+  });
+}
+
+/* ---------- Buscar producto (sin código / etiqueta rota / sin stock) ---------- */
+async function abrirBuscar() {
+  pendientesCache = await idb.todos('pendientes');
+  $('b-buscar').value = '';
+  mostrar('buscar');
+  pintarBuscar();
+}
+
+function pintarBuscar() {
+  const q = normalizar($('b-buscar').value);
+  const porCodigo = lotesTodos(pendientesCache);
+  const modo = modoActual();
+  const lista = Object.keys(catalogo).map(function (c) { return catalogo[c]; }).filter(function (p) {
+    if (!p.nombre) return false;
+    const m = p.categoria ? modoDe(p.categoria) : '';
+    if (!q && m && m !== modo) return false; // sin búsqueda: solo los del modo actual
+    return !q || normalizar(p.nombre + ' ' + (p.marca || '') + ' ' + p.codigo).indexOf(q) >= 0;
+  }).sort(function (a, b) {
+    const ia = /^INT-/.test(a.codigo) ? 0 : 1, ib = /^INT-/.test(b.codigo) ? 0 : 1; // primero los sin código
+    return ia - ib || a.nombre.localeCompare(b.nombre, 'es');
+  }).slice(0, 60);
+  $('b-lista').innerHTML = lista.length ? lista.map(function (p) {
+    const total = (porCodigo[p.codigo] || []).reduce(function (s, l) { return s + l.stock; }, 0);
+    return '<div class="prod" data-c="' + esc(p.codigo) + '"><div class="prod-cab"><span>' + esc(p.nombre) +
+      (p.marca ? ' <span class="muted">· ' + esc(p.marca) + '</span>' : '') + '</span><span class="prod-total">' + total + '</span></div>' +
+      '<div class="lote">' + (/^INT-/.test(p.codigo) ? 'Sin código de barras' : esc(p.codigo)) + (p.categoria ? ' · ' + esc(bonito(p.categoria)) : '') + '</div></div>';
+  }).join('') : '<p class="muted">' + (q ? 'No hay productos con ese nombre. Si es nuevo, créalo abajo.' : 'Todavía no hay productos de este modo.') + '</p>';
+  cada($('b-lista').querySelectorAll('.prod'), function (d) {
     d.onclick = function () { abrirFormulario(d.dataset.c); };
   });
 }
@@ -982,7 +1042,8 @@ function pintarStock() {
 /* ---------- Sincronización ---------- */
 async function llamar(metodo, datos) {
   const ctrl = new AbortController();
-  const t = setTimeout(function () { ctrl.abort(); }, 30000);
+  // El servidor puede tardar al consultar Open Food Facts o guardar fotos
+  const t = setTimeout(function () { ctrl.abort(); }, metodo === 'POST' ? 60000 : 30000);
   try {
     let resp;
     if (metodo === 'GET') {
@@ -1022,7 +1083,8 @@ function aplicarDatos(d) {
 }
 
 async function sincronizar(manual) {
-  if (sincronizando || !ajustes.url || !ajustes.token) return;
+  if (!ajustes.url || !ajustes.token) return;
+  if (sincronizando) { resincronizar = true; return; } // se repetirá al terminar la actual
   if (!navigator.onLine) {
     if (manual) toast('Sin conexión. Se sincronizará al volver la red.');
     return;
@@ -1078,6 +1140,7 @@ async function sincronizar(manual) {
     if (manual) toast('Error al sincronizar: ' + e.message, 4000);
   } finally {
     sincronizando = false;
+    if (resincronizar) { resincronizar = false; setTimeout(function () { sincronizar(false); }, 500); }
     await refrescarEstado();
     await pintarHistorial();
     if (!$('pantalla-ajustes').classList.contains('oculto')) pintarListas();
