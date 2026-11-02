@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.1.0';
+const VERSION = '2.3.0';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -66,11 +66,16 @@ const ultimaCad = {};
 let pendientesCache = [];
 let vistaStock = 'producto';
 let tipoLista = 'CATEGORIA';
+let stockFiltrado = true;
 
 const $ = function (id) { return document.getElementById(id); };
 function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function cada(lista, fn) { Array.prototype.forEach.call(lista, fn); }
-function bonito(cat) { return String(cat || '').replace(/_/g, ' ').toLowerCase().replace(/^./, function (c) { return c.toUpperCase(); }); }
+const TILDES = { energia: 'energía', botiquin: 'botiquín', categoria: 'categoría' };
+function bonito(cat) {
+  return String(cat || '').replace(/_/g, ' ').toLowerCase().split(' ').map(function (w) { return TILDES[w] || w; }).join(' ')
+    .replace(/^./, function (c) { return c.toUpperCase(); });
+}
 
 let toastTimer;
 function toast(msg, ms) {
@@ -99,6 +104,24 @@ function valores(tipo, estancia, incluirInactivos) {
   }).map(function (x) { return x.valor; });
 }
 function categorias() { return valores('CATEGORIA'); }
+function modoDe(cat) {
+  const x = listas.find(function (i) { return i.tipo === 'CATEGORIA' && i.valor === cat; });
+  return x ? (x.padre || x.estancia || '') : '';
+}
+// Categorías del modo actual (las que no tienen modo asignado salen en los dos)
+function categoriasDelModo(modo) {
+  return categorias().filter(function (c) { const m = modoDe(c); return !m || m === modo; });
+}
+// Grupo = lo que va antes de " – " ("Mochila – Botiquín/higiene" → "Mochila")
+function grupoDe(est) { return String(est || '').split(/\s[–-]\s/)[0].trim(); }
+function grupos() {
+  const g = [];
+  estancias().forEach(function (e) { const x = grupoDe(e); if (g.indexOf(x) < 0) g.push(x); });
+  return g;
+}
+function grupoActual() { const g = grupos(); return g.indexOf(ajustes.grupo) >= 0 ? ajustes.grupo : g[0]; }
+function modoActual() { return ajustes.modo === 'MATERIAL' ? 'MATERIAL' : 'DESPENSA'; }
+function estanciasDelGrupo(g) { return estancias().filter(function (e) { return grupoDe(e) === g; }); }
 function estancias() { const e = valores('ESTANCIA'); return e.length ? e : [ESTANCIA_RESERVA]; }
 function ubicacionesDe(est) { return valores('UBICACION', est); }
 
@@ -120,6 +143,7 @@ async function iniciar() {
   enlazarEventos();
   $('a-version').textContent = VERSION;
 
+  pintarContexto();
   if (!ajustes.url || !ajustes.token || !ajustes.usuario) abrirAjustes();
   else mostrar('inicio');
 
@@ -153,6 +177,11 @@ function opcionesConValor(select, lista, valor, vacia) {
 
 function enlazarEventos() {
   $('btn-ajustes').onclick = abrirAjustes;
+  ['DESPENSA', 'MATERIAL'].forEach(function (m) {
+    $('c-' + m).onclick = async function () { ajustes.modo = m; await guardarAjustesLocales(); pintarContexto(); };
+  });
+  $('s-filtro').onclick = function () { stockFiltrado = !stockFiltrado; pintarStock(); };
+  $('l-modo').onchange = pintarListas;
   $('btn-sincronizar').onclick = function () { sincronizar(true); };
   $('btn-escanear').onclick = abrirEscaner;
   $('btn-stock').onclick = abrirStock;
@@ -168,6 +197,11 @@ function enlazarEventos() {
 
   $('f-editar').onclick = function () { $('f-ficha').classList.toggle('oculto'); };
   $('p-guardar-ficha').onclick = guardarSoloFicha;
+  $('p-linea').onchange = function () {
+    if ($('p-linea').value === '__todas') { pintarLineas('__todas'); return; }
+    actual.lineaTocada = true;
+  };
+  $('p-nombre').onchange = function () { pintarCategoriasFicha(); if (!actual.lineaTocada) pintarLineas(''); };
   $('p-foto').onclick = function () { $('p-foto-input').click(); };
   $('p-foto-input').onchange = tomarFoto;
   $('p-consumible').onclick = function () { ponerTipoProducto('CONSUMIBLE'); };
@@ -176,7 +210,7 @@ function enlazarEventos() {
   $('f-salida').onclick = function () { cambiarTipo('SALIDA'); };
   $('f-menos').onclick = function () { cambiarCantidad(-1); };
   $('f-mas').onclick = function () { cambiarCantidad(1); };
-  $('f-almacen').onchange = function () { pintarUbicaciones(''); pintarLineas(); };
+  $('f-almacen').onchange = function () { pintarUbicaciones(''); pintarLineas(actual.lineaTocada ? undefined : ''); };
   $('f-guardar').onclick = function () { guardarMovimiento(false); };
   $('f-guardar-seguir').onclick = function () { guardarMovimiento(true); };
   $('f-cancelar').onclick = function () { mostrar('inicio'); };
@@ -198,6 +232,18 @@ function enlazarEventos() {
   });
   $('l-estancia').onchange = pintarListas;
   $('l-anadir').onclick = anadirALista;
+}
+
+/* ---------- Dónde estás / qué metes ---------- */
+function pintarContexto() {
+  const g = grupoActual();
+  $('c-grupos').innerHTML = grupos().map(function (x) {
+    return '<button class="chip' + (x === g ? ' activo' : '') + '" data-g="' + esc(x) + '">' + esc(x) + '</button>';
+  }).join('');
+  cada($('c-grupos').children, function (b) {
+    b.onclick = async function () { ajustes.grupo = b.dataset.g; await guardarAjustesLocales(); pintarContexto(); };
+  });
+  ['DESPENSA', 'MATERIAL'].forEach(function (m) { $('c-' + m).classList.toggle('activo', m === modoActual()); });
 }
 
 /* ---------- Estado e historial ---------- */
@@ -324,7 +370,8 @@ async function abrirFormulario(codigo, opciones_) {
   pendientesCache = await idb.todos('pendientes');
   const p = catalogo[codigo] || {};
   actual = { codigo: codigo, existe: !!catalogo[codigo], sinCodigo: !!op.sinCodigo || /^INT-/.test(codigo),
-             tipoProducto: p.tipo || 'CONSUMIBLE', categoria: p.categoria || '', fotoUrl: '' };
+             tipoProducto: p.tipo || 'CONSUMIBLE', categoria: p.categoria || '', fotoUrl: '',
+             offTags: [], catSugerida: false, lineaTocada: !!p.linea_objetivo, verTodasLineas: false };
 
   pintarCabeceraProducto();
   $('f-codigo').textContent = actual.sinCodigo ? 'Sin código de barras (' + codigo + ')' : codigo;
@@ -344,8 +391,13 @@ async function abrirFormulario(codigo, opciones_) {
   $('f-nota').value = '';
   const previa = (ultimaCad[codigo] || '').split('-');
   ponerCaducidad(previa[0] || '', previa[1] || '');
-  opcionesConValor($('f-almacen'), estancias(), ajustes.ultimoAlmacen || ajustes.almacen || estancias()[0]);
-  pintarUbicaciones(ajustes.ultimoEstante || '');
+  const delGrupo = estanciasDelGrupo(grupoActual());
+  const sitio = (ajustes.sitioPorCodigo || {})[codigo] || {};
+  const preferida = [sitio.almacen, ajustes.ultimoAlmacen].find(function (e) { return e && delGrupo.indexOf(e) >= 0; }) || delGrupo[0];
+  opciones($('f-almacen'), delGrupo);
+  $('f-almacen').value = preferida;
+  $('f-almacen-caja').classList.toggle('oculto', delGrupo.length < 2);
+  pintarUbicaciones(sitio.almacen === preferida && sitio.estante ? sitio.estante : (ajustes.ultimoEstante || ''));
   pintarLineas(p.linea_objetivo || '');
 
   const total = lotesDe(codigo).reduce(function (s, l) { return s + l.stock; }, 0);
@@ -359,6 +411,100 @@ async function abrirFormulario(codigo, opciones_) {
   if (!actual.sinCodigo && !p.nombre) consultarOFF(codigo);
 }
 
+/* ---------- Sugerencias de categoría y de línea de objetivo ---------- */
+const VACIAS = ['de', 'del', 'la', 'el', 'los', 'las', 'en', 'con', 'sin', 'y', 'o', 'para', 'por', 'al', 'lata', 'bote', 'pack', 'tarro', 'bolsa', 'caja', 'uds', 'unidad', 'unidades', 'gr', 'kg', 'ml'];
+// palabra (raíz) -> grupo genérico que también se añade
+const SINONIMOS = {
+  garba: 'legum', lente: 'legum', alubi: 'legum', judia: 'legum', fabes: 'legum',
+  atun: 'pesca', sardi: 'pesca', caball: 'pesca', bonit: 'pesca', melva: 'pesca', mejil: 'pesca', berbe: 'pesca',
+  maiz: 'verdu', guisa: 'verdu', pimie: 'verdu', champ: 'verdu', espar: 'verdu', menes: 'verdu', zanah: 'verdu', judias: 'verdu',
+  meloc: 'fruta', pina: 'fruta', pera: 'fruta', compo: 'fruta', almib: 'fruta',
+  galle: 'galle', tosta: 'galle', crack: 'galle', biscot: 'galle',
+  avena: 'cerea', copos: 'cerea', cerea: 'cerea', muesl: 'cerea',
+  colac: 'cacao', nesqu: 'cacao', cacao: 'cacao', cafe: 'cafe', infus: 'cafe', manza: 'cafe', te: 'cafe',
+  almen: 'fruto', nuez: 'fruto', nueces: 'fruto', cacah: 'fruto', pista: 'fruto', anacar: 'fruto',
+  macar: 'pasta', espag: 'pasta', fidec: 'pasta', fideo: 'pasta', tallar: 'pasta', helic: 'pasta'
+};
+const REGLAS = {
+  BEBIDA: ['agua', 'leche', 'zumo', 'refresco', 'vino', 'cerveza', 'bebida', 'batido', 'nectar', 'gaseosa'],
+  POTABILIZAR: ['lejia', 'filtro', 'potabiliz', 'pastillas potab'],
+  PLATOS_PREPARADOS: ['fabada', 'cocido', 'callos', 'oreja', 'lentejas con', 'lentejas estofadas', 'plato', 'preparad', 'guiso', 'estofad', 'albondiga', 'potaje', 'paella', 'cocinad'],
+  CONSERVAS: ['atun', 'sardina', 'caballa', 'mejillon', 'berberecho', 'bonito', 'maiz', 'guisante', 'pimiento', 'champinon', 'esparrago', 'menestra', 'garbanzos cocidos', 'alubias cocidas', 'lentejas cocidas', 'legumbre', 'almibar', 'melocoton', 'compota', 'aceituna', 'conserva'],
+  COCINAR: ['arroz', 'pasta', 'macarron', 'espagueti', 'spaghetti', 'fideo', 'harina', 'tallarin', 'helices', 'cuscus', 'pure de patata'],
+  CONDIMENTOS: ['aceite', 'sal ', 'azucar', 'tomate', 'caldo', 'vinagre', 'especia', 'pimenton', 'oregano', 'mayonesa', 'ketchup', 'mostaza', 'pastilla de caldo'],
+  DESAYUNO: ['cacao', 'cola cao', 'colacao', 'nesquik', 'cafe', 'infusion', 'manzanilla', 'magdalena', 'galleta', 'cereal', 'avena', 'miel', 'mermelada', 'crema de cacahuete', 'tostada', 'bizcocho', 'nocilla', 'nutella'],
+  SNACKS: ['patatas fritas', 'gusanito', 'frutos secos', 'almendra', 'nuez', 'cacahuete', 'pistacho', 'chocolate', 'barrita', 'chips', 'palomita', 'snack'],
+  MENAJE_Y_GAS: ['cartucho', 'campingaz', 'gas', 'abrelatas', 'mechero', 'cerilla', 'desechable', 'vaso', 'cubierto', 'servilleta', 'hornillo'],
+  ENERGIA: ['pila', 'bateria', 'cargador', 'linterna', 'frontal', 'panel solar', 'powerbank', 'power bank'],
+  HIGIENE: ['papel higienico', 'toallita', 'gel', 'champu', 'pasta de dientes', 'dentifrico', 'cepillo', 'desodorante', 'compresa', 'tampon', 'jabon', 'hidroalcoholico'],
+  LIMPIEZA: ['bolsa de basura', 'bolsas de basura', 'lavavajillas', 'detergente', 'friegasuelos', 'estropajo', 'guantes', 'papel de cocina', 'amoniaco', 'bayeta'],
+  BOTIQUIN: ['paracetamol', 'ibuprofeno', 'tirita', 'gasa', 'suero', 'termometro', 'betadine', 'desinfectante', 'venda', 'medicamento', 'aspirina', 'clorhexidina']
+};
+// Categorías de Open Food Facts (categories_tags) -> categoría propia
+const REGLAS_OFF = {
+  BEBIDA: ['waters', 'milks', 'juices', 'beverages', 'wines', 'sodas'],
+  PLATOS_PREPARADOS: ['meals', 'prepared-', 'stews', 'canned-meals'],
+  CONSERVAS: ['canned-', 'fish-in-', 'canned-fish', 'canned-vegetables', 'canned-legumes', 'fruits-in-syrup', 'olives'],
+  COCINAR: ['rices', 'pastas', 'flours', 'dry-pastas'],
+  CONDIMENTOS: ['oils', 'salts', 'sugars', 'tomato-sauces', 'broths', 'condiments', 'sauces', 'vinegars', 'spices'],
+  DESAYUNO: ['breakfasts', 'cereals', 'biscuits', 'cocoa', 'coffees', 'teas', 'honeys', 'jams', 'spreads', 'cakes'],
+  SNACKS: ['snacks', 'nuts', 'chocolates', 'chips', 'crisps']
+};
+
+function normalizar(t) {
+  return String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ñ/g, 'n').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function raices(t) {
+  const set = new Set();
+  normalizar(t).split(' ').forEach(function (w) {
+    if (w.length < 3 || VACIAS.indexOf(w) >= 0 || /^\d/.test(w)) return;
+    const r = w.slice(0, 5);
+    set.add(r);
+    const grupo = SINONIMOS[r] || SINONIMOS[w];
+    if (grupo) set.add('#' + grupo);
+  });
+  return set;
+}
+function coincidencias(a, b) { let n = 0; a.forEach(function (x) { if (b.has(x)) n++; }); return n; }
+
+function sugerirCategorias() {
+  const activas = categoriasDelModo(modoActual());
+  if (!activas.length) return [];
+  const nombre = $('p-nombre').value + ' ' + $('p-marca').value;
+  const texto = ' ' + normalizar(nombre) + ' ';
+  const mias = raices(nombre);
+  const puntos = {};
+  activas.forEach(function (c) { puntos[c] = 0; });
+  Object.keys(REGLAS).forEach(function (c) {
+    if (!(c in puntos)) return;
+    REGLAS[c].forEach(function (k) { if (texto.indexOf(normalizar(k).length < 4 ? ' ' + normalizar(k) + ' ' : normalizar(k)) >= 0) puntos[c] += 2; });
+  });
+  (actual.offTags || []).forEach(function (tag) {
+    Object.keys(REGLAS_OFF).forEach(function (c) {
+      if (c in puntos && REGLAS_OFF[c].some(function (k) { return tag.indexOf(k) >= 0; })) puntos[c] += 3;
+    });
+  });
+  // Productos parecidos que ya tienes clasificados
+  if (mias.size) {
+    const mejor = {};
+    Object.keys(catalogo).forEach(function (cod) {
+      const p = catalogo[cod];
+      if (cod === actual.codigo || !p.categoria || !(p.categoria in puntos)) return;
+      const n = coincidencias(mias, raices(p.nombre));
+      if (n > (mejor[p.categoria] || 0)) mejor[p.categoria] = n;
+    });
+    Object.keys(mejor).forEach(function (c) { puntos[c] += mejor[c] * 1.5; });
+  }
+  return activas.map(function (c) { return { cat: c, puntos: puntos[c] }; })
+    .filter(function (x) { return x.puntos > 0; })
+    .sort(function (a, b) { return b.puntos - a.puntos; });
+}
+
+function puntuarLinea(o) {
+  const mias = raices($('p-nombre').value + ' ' + $('p-marca').value);
+  return coincidencias(mias, raices(o.descripcion));
+}
+
 /* ---------- Open Food Facts (desde el móvil, si hay red) ---------- */
 async function consultarOFF(codigo) {
   if (!navigator.onLine) { $('f-off').textContent = 'Sin conexión: se buscará en Open Food Facts al sincronizar.'; return; }
@@ -367,7 +513,7 @@ async function consultarOFF(codigo) {
   const t = setTimeout(function () { ctrl.abort(); }, 6000);
   try {
     const url = 'https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(codigo) +
-      '.json?fields=product_name,product_name_es,brands,product_quantity,product_quantity_unit,image_front_small_url';
+      '.json?fields=product_name,product_name_es,brands,product_quantity,product_quantity_unit,image_front_small_url,categories_tags';
     const r = await fetch(url, { signal: ctrl.signal });
     const j = r.ok ? await r.json() : null;
     if (!actual || actual.codigo !== codigo) return; // el usuario ya cambió de producto
@@ -380,9 +526,12 @@ async function consultarOFF(codigo) {
     const cont = convertirCantidad(prod.product_quantity, prod.product_quantity_unit);
     if (!$('p-contenido').value && cont.contenido) { $('p-contenido').value = String(cont.contenido).replace('.', ','); $('p-unidad').value = cont.unidad; }
     if (prod.image_front_small_url) actual.fotoUrl = prod.image_front_small_url;
+    actual.offTags = (prod.categories_tags || []).map(String);
     $('f-nombre').textContent = $('p-nombre').value + ($('p-marca').value ? ' · ' + $('p-marca').value : '');
-    $('f-off').textContent = '✓ Datos de Open Food Facts. Revisa el nombre y elige la categoría.';
+    $('f-off').textContent = '✓ Datos de Open Food Facts. Revisa el nombre y la categoría.';
     pintarFoto();
+    pintarCategoriasFicha();
+    pintarLineas();
   } catch (e) {
     if (actual && actual.codigo === codigo) $('f-off').textContent = 'Open Food Facts no responde; se buscará al sincronizar.';
   } finally {
@@ -453,20 +602,43 @@ function pintarCabeceraProducto() {
 }
 
 function pintarCategoriasFicha() {
-  const lista = categorias().slice();
-  if (actual.categoria && lista.indexOf(actual.categoria) < 0) lista.push(actual.categoria);
-  if (!lista.length) { $('p-categorias').innerHTML = '<span class="muted">Sincroniza para descargar las categorías.</span>'; return; }
-  $('p-categorias').innerHTML = lista.map(function (c) {
-    return '<button class="chip' + (c === actual.categoria ? ' activo' : '') + '" data-c="' + esc(c) + '">' + esc(bonito(c)) + '</button>';
-  }).join('');
-  cada($('p-categorias').children, function (b) {
+  const todas = categoriasDelModo(modoActual());
+  if (actual.categoria && todas.indexOf(actual.categoria) < 0) todas.push(actual.categoria);
+  if (!todas.length) { $('p-categorias').innerHTML = '<span class="muted">Sincroniza para descargar las categorías.</span>'; return; }
+  const sug = sugerirCategorias().slice(0, 3);
+  // Preseleccionar la mejor si el producto aún no tiene categoría elegida por el usuario
+  if (!actual.categoria || actual.catSugerida) {
+    if (sug.length && sug[0].puntos >= 2) { actual.categoria = sug[0].cat; actual.catSugerida = true; }
+    else if (actual.catSugerida) { actual.categoria = ''; actual.catSugerida = false; } // la sugerencia anterior ya no vale
+  }
+  const sugCats = sug.map(function (x) { return x.cat; });
+  function chip(c) {
+    return '<button class="chip' + (c === actual.categoria ? ' activo' : '') + '" data-c="' + esc(c) + '">' + esc(bonito(c)) +
+      (c === actual.categoria && actual.catSugerida ? ' (sugerida)' : '') + '</button>';
+  }
+  let html = '';
+  if (sugCats.length) {
+    html += '<div class="muted" style="width:100%">Sugeridas:</div>' + sugCats.map(chip).join('') +
+      '<button class="enlace" id="p-ver-cats" style="width:100%;text-align:left">' + (actual.verTodasCats ? 'Ocultar el resto' : 'Ver todas las categorías') + '</button>';
+    if (actual.verTodasCats || (actual.categoria && sugCats.indexOf(actual.categoria) < 0)) {
+      html += todas.filter(function (c) { return sugCats.indexOf(c) < 0; }).map(chip).join('');
+    }
+  } else {
+    html = todas.map(chip).join('');
+  }
+  $('p-categorias').innerHTML = html;
+  const ver = $('p-ver-cats');
+  if (ver) ver.onclick = function () { actual.verTodasCats = !actual.verTodasCats; pintarCategoriasFicha(); };
+  cada($('p-categorias').querySelectorAll('.chip'), function (b) {
     b.onclick = function () {
       actual.categoria = b.dataset.c;
-      cada($('p-categorias').children, function (x) { x.classList.toggle('activo', x === b); });
+      actual.catSugerida = false;
+      pintarCategoriasFicha();
       pintarCabeceraProducto();
-      pintarLineas($('p-linea').value);
+      if (!actual.lineaTocada) pintarLineas(''); else pintarLineas();
     };
   });
+  pintarCabeceraProducto();
 }
 
 function ponerTipoProducto(t) {
@@ -478,6 +650,7 @@ function ponerTipoProducto(t) {
 
 function pintarUbicaciones(preferida) {
   const est = $('f-almacen').value;
+  $('f-sitio').textContent = '📍 ' + est + ' · ' + (modoActual() === 'MATERIAL' ? 'Material' : 'Despensa') + ' (se cambia en la pantalla principal)';
   const ubis = ubicacionesDe(est);
   $('f-estante-caja').classList.toggle('oculto', !ubis.length);
   if (!ubis.length) { opciones($('f-estante'), []); return; }
@@ -485,22 +658,40 @@ function pintarUbicaciones(preferida) {
   $('f-estante').value = ubis.indexOf(preferida) >= 0 ? preferida : ubis[0];
 }
 
-// Líneas de objetivo de la estancia elegida, primero las de la misma categoría
+// Líneas de objetivo: solo las de la estancia y la categoría del producto, ordenadas por parecido.
 function pintarLineas(valor) {
+  const sel = $('p-linea');
   const est = $('f-almacen').value;
-  const actualValor = valor !== undefined ? valor : $('p-linea').value;
+  let elegido = valor !== undefined ? valor : sel.value;
+  if (elegido === '__todas') { actual.verTodasLineas = true; elegido = ''; }
   const delSitio = objetivos.filter(function (o) { return o.almacen === est; });
-  delSitio.sort(function (a, b) {
-    const ma = a.categoria === actual.categoria ? 0 : 1, mb = b.categoria === actual.categoria ? 0 : 1;
-    return ma - mb || String(a.categoria).localeCompare(String(b.categoria)) || String(a.descripcion).localeCompare(String(b.descripcion));
-  });
-  const ops = delSitio.map(function (o) { return { v: o.id, t: bonito(o.categoria) + ' · ' + o.descripcion }; });
-  if (actualValor && !ops.some(function (o) { return o.v === actualValor; })) {
-    const o = objetivos.find(function (x) { return x.id === actualValor; });
-    ops.unshift({ v: actualValor, t: o ? o.almacen + ' · ' + o.descripcion : actualValor });
+  const propias = delSitio.filter(function (o) { return !actual.categoria || o.categoria === actual.categoria; })
+    .map(function (o) { return { o: o, p: puntuarLinea(o) }; })
+    .sort(function (a, b) { return b.p - a.p || String(a.o.descripcion).localeCompare(String(b.o.descripcion)); });
+  const otras = actual.verTodasLineas ? delSitio.filter(function (o) { return actual.categoria && o.categoria !== actual.categoria; }) : [];
+
+  // Sugerir la más parecida si el usuario no ha elegido ninguna
+  let sugerida = '';
+  if (!elegido && !actual.lineaTocada && propias.length && (propias[0].p > 0 || propias.length === 1)) {
+    elegido = propias[0].o.id;
+    sugerida = elegido;
   }
-  opciones($('p-linea'), ops, objetivos.length ? '— Ninguno —' : '— Sin objetivos descargados —');
-  $('p-linea').value = actualValor || '';
+  let html = '<option value="">' + (objetivos.length ? '— Ninguno —' : '— Sin objetivos descargados —') + '</option>';
+  html += propias.map(function (x) {
+    return '<option value="' + esc(x.o.id) + '">' + esc(x.o.descripcion) + (x.o.id === sugerida ? ' (sugerida)' : '') + '</option>';
+  }).join('');
+  if (otras.length) {
+    html += '<optgroup label="Otras categorías">' + otras.map(function (o) {
+      return '<option value="' + esc(o.id) + '">' + esc(bonito(o.categoria)) + ' · ' + esc(o.descripcion) + '</option>';
+    }).join('') + '</optgroup>';
+  }
+  if (elegido && !delSitio.some(function (o) { return o.id === elegido; })) {
+    const o = objetivos.find(function (x) { return x.id === elegido; });
+    html += '<option value="' + esc(elegido) + '">' + esc(o ? o.almacen + ' · ' + o.descripcion : elegido) + '</option>';
+  }
+  if (!actual.verTodasLineas && delSitio.length > propias.length) html += '<option value="__todas">Ver otras categorías…</option>';
+  sel.innerHTML = html;
+  sel.value = elegido || '';
 }
 
 // Stock por lote combinando el último dato del servidor y los movimientos pendientes del móvil
@@ -530,7 +721,8 @@ function cambiarTipo(tipo) {
   $('f-entrada').classList.toggle('activo', tipo === 'ENTRADA');
   $('f-salida').classList.toggle('activo', tipo === 'SALIDA');
   $('f-salida').classList.toggle('salida', tipo === 'SALIDA');
-  const lotes = tipo === 'SALIDA' ? lotesDe(actual.codigo) : [];
+  const delGrupo = estanciasDelGrupo(grupoActual());
+  const lotes = tipo === 'SALIDA' ? lotesDe(actual.codigo).filter(function (l) { return delGrupo.indexOf(l.almacen) >= 0; }) : [];
   $('f-lotes-caja').classList.toggle('oculto', !lotes.length);
   $('f-lotes').innerHTML = lotes.map(function (l, i) {
     return '<button class="chip" data-i="' + i + '">' + esc(l.caducidad || 'sin cad.') + ' · ' +
@@ -547,7 +739,7 @@ function elegirLote(l, boton) {
   boton.classList.add('activo');
   const partes = (l.caducidad || '').split('-');
   ponerCaducidad(partes[0] || '', partes[1] || '');
-  if (l.almacen) { opcionesConValor($('f-almacen'), estancias(), l.almacen); }
+  if (l.almacen) $('f-almacen').value = l.almacen;
   pintarUbicaciones(l.estante);
   if (l.estante && $('f-estante').value !== l.estante) {
     // ubicación antigua que ya no está en la lista
@@ -664,6 +856,10 @@ async function guardarMovimiento(seguir) {
   if (mov.tipo === 'ENTRADA') ultimaCad[mov.codigo] = mov.caducidad;
   ajustes.ultimoAlmacen = mov.almacen;
   if (mov.estante) ajustes.ultimoEstante = mov.estante;
+  if (mov.tipo === 'ENTRADA') {
+    ajustes.sitioPorCodigo = ajustes.sitioPorCodigo || {};
+    ajustes.sitioPorCodigo[mov.codigo] = { almacen: mov.almacen, estante: mov.estante };
+  }
   await guardarAjustesLocales();
 
   toast((mov.tipo === 'ENTRADA' ? 'Entrada' : 'Salida') + ' guardada: ' + cantidad + ' × ' + nombreDe(mov.codigo));
@@ -704,6 +900,9 @@ function pintarStock() {
   ['producto', 'categoria', 'estancia'].forEach(function (v) { $('s-v-' + v).classList.toggle('activo', v === vistaStock); });
   const porCodigo = lotesTodos(pendientesCache);
   const q = $('s-buscar').value.trim().toLowerCase();
+  const g = grupoActual(), modo = modoActual(), delGrupo = estanciasDelGrupo(g);
+  $('s-filtro').textContent = stockFiltrado ? '📍 Solo ' + g + ' · ' + (modo === 'MATERIAL' ? 'Material' : 'Despensa') + '  (tocar para ver todo)' : 'Viendo todo (tocar para filtrar)';
+  $('s-filtro').classList.toggle('activo', stockFiltrado);
 
   // Filas planas: un lote por fila
   const lotes = [];
@@ -711,7 +910,11 @@ function pintarStock() {
     const p = catalogo[c] || {};
     const texto = ((p.nombre || '') + ' ' + (p.marca || '') + ' ' + c).toLowerCase();
     if (q && texto.indexOf(q) < 0) return;
-    porCodigo[c].forEach(function (l) { lotes.push(Object.assign({ codigo: c }, l)); });
+    if (stockFiltrado && p.categoria && modoDe(p.categoria) && modoDe(p.categoria) !== modo) return;
+    porCodigo[c].forEach(function (l) {
+      if (stockFiltrado && delGrupo.indexOf(l.almacen) < 0) return;
+      lotes.push(Object.assign({ codigo: c }, l));
+    });
   });
 
   const productos = {};
@@ -878,6 +1081,7 @@ async function sincronizar(manual) {
     await refrescarEstado();
     await pintarHistorial();
     if (!$('pantalla-ajustes').classList.contains('oculto')) pintarListas();
+    pintarContexto();
   }
 }
 
@@ -886,7 +1090,6 @@ function abrirAjustes() {
   $('a-url').value = ajustes.url || '';
   $('a-token').value = ajustes.token || '';
   $('a-usuario').value = ajustes.usuario || '';
-  opcionesConValor($('a-almacen'), estancias(), ajustes.almacen || estancias()[0]);
   $('a-resultado').textContent = '';
   pintarListas();
   mostrar('ajustes');
@@ -897,7 +1100,7 @@ async function guardarAjustes() {
   if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) { toast('La dirección debe empezar por https://script.google.com y terminar en /exec', 4000); return; }
   if (!token) { toast('Falta el token'); return; }
   if (!usuario) { toast('Escribe tu nombre'); return; }
-  ajustes.url = url; ajustes.token = token; ajustes.usuario = usuario; ajustes.almacen = $('a-almacen').value;
+  ajustes.url = url; ajustes.token = token; ajustes.usuario = usuario;
   await guardarAjustesLocales();
   toast('Ajustes guardados');
   mostrar('inicio');
@@ -911,7 +1114,7 @@ async function probarConexion() {
   $('a-resultado').textContent = 'Probando…';
   try {
     const r = await llamar('GET', { accion: 'ping' });
-    $('a-resultado').textContent = '✅ Conexión correcta' + (r.version >= 2.1 ? '' : ' (servidor antiguo: actualiza Codigo.gs a la v2.1)') + '. Pulsa Guardar.';
+    $('a-resultado').textContent = '✅ Conexión correcta' + (r.version >= 2.2 ? '' : ' (servidor antiguo: actualiza Codigo.gs a la v2.2)') + '. Pulsa Guardar.';
   } catch (e) {
     $('a-resultado').textContent = '❌ ' + e.message;
   } finally {
@@ -924,9 +1127,16 @@ function pintarListas() {
   ['CATEGORIA', 'ESTANCIA', 'UBICACION'].forEach(function (t) { $('l-t-' + t).classList.toggle('activo', t === tipoLista); });
   const conEstancia = tipoLista === 'UBICACION';
   $('l-estancia-caja').classList.toggle('oculto', !conEstancia);
+  $('l-modo-caja').classList.toggle('oculto', tipoLista !== 'CATEGORIA');
+  const modoL = $('l-modo').value;
   if (conEstancia) opcionesConValor($('l-estancia'), estancias(), $('l-estancia').value || estancias()[0]);
   const est = conEstancia ? $('l-estancia').value : '';
-  const items = listas.filter(function (x) { return x.tipo === tipoLista && (!conEstancia || x.estancia === est); });
+  const items = listas.filter(function (x) {
+    if (x.tipo !== tipoLista) return false;
+    if (conEstancia) return x.estancia === est;
+    if (tipoLista === 'CATEGORIA') { const m = x.padre || x.estancia; return !m || m === modoL; }
+    return true;
+  });
   if (!listas.length) { $('l-items').innerHTML = '<p class="muted">Aún no se han descargado las listas. Sincroniza con conexión (y comprueba que el servidor está en la v2).</p>'; return; }
   $('l-items').innerHTML = items.length ? items.map(function (x, i) {
     return '<div class="lista-item' + (x.activo ? '' : ' inactivo') + '"><span>' + esc(tipoLista === 'CATEGORIA' ? bonito(x.valor) : x.valor) +
@@ -935,7 +1145,7 @@ function pintarListas() {
   cada($('l-items').querySelectorAll('button'), function (b) {
     b.onclick = function () {
       const x = items[Number(b.dataset.i)];
-      cambiarLista({ op: x.activo ? 'desactivar' : 'activar', tipo: x.tipo, valor: x.valor, estancia: x.estancia });
+      cambiarLista({ op: x.activo ? 'desactivar' : 'activar', tipo: x.tipo, valor: x.valor, estancia: x.estancia, padre: x.padre || x.estancia });
     };
   });
 }
@@ -944,7 +1154,8 @@ async function anadirALista() {
   let valor = $('l-nuevo').value.trim();
   if (!valor) { toast('Escribe el nuevo valor'); return; }
   if (tipoLista === 'CATEGORIA') valor = valor.toUpperCase().replace(/\s+/g, '_');
-  const ok = await cambiarLista({ op: 'añadir', tipo: tipoLista, valor: valor, estancia: tipoLista === 'UBICACION' ? $('l-estancia').value : '' });
+  const padre = tipoLista === 'UBICACION' ? $('l-estancia').value : (tipoLista === 'CATEGORIA' ? $('l-modo').value : '');
+  const ok = await cambiarLista({ op: 'añadir', tipo: tipoLista, valor: valor, estancia: padre, padre: padre });
   if (ok) $('l-nuevo').value = '';
 }
 

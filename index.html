@@ -92,6 +92,16 @@
       <button class="btn btn-sec" id="btn-sincronizar">🔄 Sincronizar ahora</button>
     </div>
 
+    <div class="tarjeta">
+      <label style="margin-top:0">📍 Dónde estás</label>
+      <div class="chips" id="c-grupos"></div>
+      <label>Qué vas a meter o sacar</label>
+      <div class="segmentado peq">
+        <button id="c-DESPENSA">🥫 Despensa (comida)</button>
+        <button id="c-MATERIAL">🧰 Material</button>
+      </div>
+    </div>
+
     <button class="btn btn-principal" id="btn-escanear">📷 Escanear</button>
     <div class="fila">
       <button class="btn btn-sec" id="btn-stock">📦 Ver stock</button>
@@ -176,8 +186,11 @@
       <div class="chips" id="f-anios"></div>
       <div class="meses" id="f-meses"></div>
 
-      <label>Estancia</label>
-      <select id="f-almacen"></select>
+      <div id="f-almacen-caja">
+        <label>Estancia</label>
+        <select id="f-almacen"></select>
+      </div>
+      <div class="muted" id="f-sitio" style="margin-top:12px"></div>
       <div id="f-estante-caja">
         <label>Ubicación</label>
         <select id="f-estante"></select>
@@ -201,6 +214,7 @@
       <button id="s-v-categoria">Categoría</button>
       <button id="s-v-estancia">Estancia</button>
     </div>
+    <button class="chip activo" id="s-filtro" style="margin-bottom:8px"></button>
     <input id="s-buscar" placeholder="🔎 Buscar por nombre, marca o código">
     <div class="muted" id="s-resumen" style="margin:8px 2px"></div>
     <div id="s-lista"></div>
@@ -218,8 +232,6 @@
       <input id="a-token" type="password" autocomplete="off">
       <label>Tu nombre (quién hace los movimientos)</label>
       <input id="a-usuario" placeholder="Sergio">
-      <label>Estancia por defecto</label>
-      <select id="a-almacen"></select>
       <button class="btn btn-principal" id="a-guardar">Guardar</button>
       <button class="btn btn-sec" id="a-probar">Probar conexión</button>
       <div class="muted" id="a-resultado"></div>
@@ -232,6 +244,10 @@
         <button id="l-t-CATEGORIA" class="activo">Categorías</button>
         <button id="l-t-ESTANCIA">Estancias</button>
         <button id="l-t-UBICACION">Ubicaciones</button>
+      </div>
+      <div id="l-modo-caja" class="oculto">
+        <label>Categorías de</label>
+        <select id="l-modo"><option value="DESPENSA">Despensa (comida)</option><option value="MATERIAL">Material</option></select>
       </div>
       <div id="l-estancia-caja" class="oculto">
         <label>Ubicaciones de la estancia</label>
@@ -252,6 +268,6 @@
 </main>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.1.0"></script>
+<script src="app.js?v=2.3.0"></script>
 </body>
 </html>
