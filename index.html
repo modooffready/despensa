@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f5d3a">
+<title>Despensa</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root { --verde:#2f5d3a; --verde2:#3f7a4d; --fondo:#f4f1ea; --tarjeta:#fff; --texto:#1f2a22; --gris:#6b736c; --rojo:#b3261e; --ambar:#e0a43a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Roboto,sans-serif; background:var(--fondo); color:var(--texto); font-size:17px; }
+  header { background:var(--verde); color:#fff; padding:14px 16px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:5; }
+  header h1 { font-size:20px; margin:0; }
+  header button { background:transparent; border:0; color:#fff; font-size:24px; padding:4px 8px; }
+  main { padding:14px; max-width:560px; margin:0 auto; }
+  .oculto { display:none !important; }
+  .tarjeta { background:var(--tarjeta); border-radius:14px; padding:14px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .estado { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; font-size:15px; }
+  .punto { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+  .on { background:#2e9d4b; } .off { background:var(--rojo); }
+  button { font:inherit; cursor:pointer; }
+  .btn { display:block; width:100%; border:0; border-radius:12px; padding:14px; font-size:18px; font-weight:600; margin:8px 0; }
+  .btn-principal { background:var(--verde); color:#fff; font-size:22px; padding:22px; }
+  .btn-sec { background:#e6e1d6; color:var(--texto); }
+  .btn-peligro { background:#f3d8d6; color:var(--rojo); }
+  .fila { display:flex; gap:8px; }
+  .fila > * { flex:1; }
+  label { display:block; font-size:14px; color:var(--gris); margin:12px 0 4px; }
+  input, select { width:100%; font:inherit; padding:12px; border:1px solid #cfc8b8; border-radius:10px; background:#fff; }
+  .segmentado { display:flex; border-radius:12px; overflow:hidden; border:2px solid var(--verde); }
+  .segmentado button { flex:1; border:0; padding:14px; font-size:18px; font-weight:600; background:#fff; color:var(--verde); }
+  .segmentado button.activo { background:var(--verde); color:#fff; }
+  .segmentado button.activo.salida { background:var(--rojo); }
+  .cantidad { display:flex; align-items:center; gap:8px; }
+  .cantidad button { width:56px; height:56px; border-radius:12px; border:0; background:#e6e1d6; font-size:28px; font-weight:700; }
+  .cantidad input { text-align:center; font-size:24px; font-weight:700; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip { border:1px solid var(--verde); background:#fff; color:var(--verde); border-radius:20px; padding:8px 12px; font-size:15px; }
+  .chip.activo { background:var(--verde); color:#fff; }
+  .historial { list-style:none; margin:0; padding:0; }
+  .historial li { padding:10px 0; border-bottom:1px solid #eee; font-size:15px; display:flex; justify-content:space-between; gap:8px; }
+  .historial .meta { color:var(--gris); font-size:13px; }
+  .tag { font-size:12px; font-weight:700; padding:2px 6px; border-radius:6px; }
+  .tag.ENTRADA { background:#dcefe0; color:#1e6b33; } .tag.SALIDA { background:#f3d8d6; color:var(--rojo); } .tag.AJUSTE { background:#f6e7c8; color:#7a5410; }
+  .muted { color:var(--gris); font-size:14px; }
+  .error { color:var(--rojo); }
+  #video-caja { position:relative; background:#000; border-radius:14px; overflow:hidden; aspect-ratio:3/4; }
+  #video { width:100%; height:100%; object-fit:cover; }
+  #guia { position:absolute; left:10%; right:10%; top:45%; height:3px; background:rgba(255,80,80,.9); box-shadow:0 0 8px red; }
+  #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#222; color:#fff; padding:12px 18px; border-radius:10px; font-size:16px; z-index:20; max-width:90%; text-align:center; }
+  h2 { margin:0 0 4px; font-size:21px; }
+  .codigo { font-family:monospace; color:var(--gris); }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="titulo">Despensa</h1>
+  <button id="btn-ajustes" aria-label="Ajustes">⚙️</button>
+</header>
+
+<main>
+  <!-- INICIO -->
+  <section id="pantalla-inicio" class="oculto">
+    <div class="tarjeta">
+      <div class="estado">
+        <span><span id="punto-red" class="punto off"></span><span id="txt-red">Sin conexión</span></span>
+        <span>Pendientes: <b id="txt-pendientes">0</b></span>
+      </div>
+      <div class="muted" id="txt-sync">Nunca sincronizado</div>
+      <div class="muted error" id="txt-error"></div>
+      <button class="btn btn-sec" id="btn-sincronizar">🔄 Sincronizar ahora</button>
+    </div>
+
+    <button class="btn btn-principal" id="btn-escanear">📷 Escanear</button>
+    <div class="fila">
+      <input id="codigo-manual" inputmode="numeric" placeholder="o escribe el código">
+      <button class="btn btn-sec" id="btn-codigo-manual" style="flex:0 0 90px;margin:0">OK</button>
+    </div>
+
+    <div class="tarjeta" style="margin-top:14px">
+      <b>Últimos movimientos</b>
+      <ul class="historial" id="lista-historial"></ul>
+    </div>
+  </section>
+
+  <!-- ESCÁNER -->
+  <section id="pantalla-escaner" class="oculto">
+    <div id="video-caja"><video id="video" playsinline muted></video><div id="guia"></div></div>
+    <p class="muted" id="txt-escaner">Apunta al código de barras</p>
+    <div class="fila">
+      <button class="btn btn-sec" id="btn-linterna">🔦 Linterna</button>
+      <button class="btn btn-sec" id="btn-cancelar-escaner">Cancelar</button>
+    </div>
+  </section>
+
+  <!-- FORMULARIO -->
+  <section id="pantalla-formulario" class="oculto">
+    <div class="tarjeta">
+      <h2 id="f-nombre">Producto</h2>
+      <div class="codigo" id="f-codigo"></div>
+      <div class="muted" id="f-stock"></div>
+      <div id="f-nuevo" class="oculto">
+        <label>Nombre (opcional, se puede completar luego)</label>
+        <input id="f-nombre-nuevo" placeholder="Ej.: Lentejas cocidas 400 g">
+        <label>Marca (opcional)</label>
+        <input id="f-marca-nueva">
+      </div>
+    </div>
+
+    <div class="tarjeta">
+      <div class="segmentado">
+        <button id="f-entrada" class="activo">Entrada</button>
+        <button id="f-salida">Salida</button>
+      </div>
+
+      <label>Cantidad (unidades)</label>
+      <div class="cantidad">
+        <button id="f-menos">−</button>
+        <input id="f-cantidad" type="number" inputmode="numeric" min="1" value="1">
+        <button id="f-mas">+</button>
+      </div>
+
+      <div id="f-lotes-caja" class="oculto">
+        <label>¿De qué lote sale? (el primero caduca antes)</label>
+        <div class="chips" id="f-lotes"></div>
+      </div>
+
+      <label>Caducidad</label>
+      <div class="fila">
+        <select id="f-mes"></select>
+        <select id="f-anio"></select>
+      </div>
+
+      <div class="fila">
+        <div><label>Almacén</label><select id="f-almacen"></select></div>
+        <div><label>Estante</label><select id="f-estante"></select></div>
+      </div>
+
+      <label>Nota (opcional)</label>
+      <input id="f-nota">
+    </div>
+
+    <button class="btn btn-principal" id="f-guardar">Guardar</button>
+    <button class="btn btn-sec" id="f-cancelar">Cancelar</button>
+  </section>
+
+  <!-- AJUSTES -->
+  <section id="pantalla-ajustes" class="oculto">
+    <div class="tarjeta">
+      <h2>Ajustes</h2>
+      <p class="muted">Se guardan solo en este móvil.</p>
+      <label>Dirección del servidor (termina en /exec)</label>
+      <input id="a-url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
+      <label>Token</label>
+      <input id="a-token" type="password" autocomplete="off">
+      <label>Tu nombre (quién hace los movimientos)</label>
+      <input id="a-usuario" placeholder="Sergio">
+      <label>Almacén por defecto</label>
+      <select id="a-almacen"></select>
+      <button class="btn btn-principal" id="a-guardar">Guardar</button>
+      <button class="btn btn-sec" id="a-probar">Probar conexión</button>
+      <div class="muted" id="a-resultado"></div>
+    </div>
+    <div class="tarjeta">
+      <div class="muted">Versión <span id="a-version"></span></div>
+      <button class="btn btn-sec" id="a-volver">Volver</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="oculto"></div>
+<script src="app.js"></script>
+</body>
+</html>
