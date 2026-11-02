@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -56,6 +56,7 @@ let stockServidor = [];  // [{codigo, caducidad, almacen, estante, stock}]
 let listas = [];         // [{tipo, valor, estancia, activo}] (pestaña Config)
 let objetivos = [];      // [{id, categoria, descripcion, almacen, …}]
 let prodPend = {};       // cambios de fichas de producto aún no enviados
+let fotosPend = {};      // codigo -> foto (dataURL) aún no subida
 let sincronizando = false;
 let ultimoError = '';
 let actual = null;       // producto abierto en el formulario
@@ -109,6 +110,7 @@ async function iniciar() {
   listas = (await idb.get('kv', 'listas')) || [];
   objetivos = (await idb.get('kv', 'objetivos')) || [];
   prodPend = (await idb.get('kv', 'prodPend')) || {};
+  fotosPend = (await idb.get('kv', 'fotosPend')) || {};
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn(e); });
@@ -165,6 +167,9 @@ function enlazarEventos() {
   $('btn-linterna').onclick = alternarLinterna;
 
   $('f-editar').onclick = function () { $('f-ficha').classList.toggle('oculto'); };
+  $('p-guardar-ficha').onclick = guardarSoloFicha;
+  $('p-foto').onclick = function () { $('p-foto-input').click(); };
+  $('p-foto-input').onchange = tomarFoto;
   $('p-consumible').onclick = function () { ponerTipoProducto('CONSUMIBLE'); };
   $('p-equipo').onclick = function () { ponerTipoProducto('EQUIPO'); };
   $('f-entrada').onclick = function () { cambiarTipo('ENTRADA'); };
@@ -201,8 +206,8 @@ async function refrescarEstado() {
   $('punto-red').className = 'punto ' + (online ? 'on' : 'off');
   $('txt-red').textContent = sincronizando ? 'Sincronizando…' : (online ? 'Con conexión' : 'Sin conexión');
   const pend = await idb.todos('pendientes');
-  const nFichas = Object.keys(prodPend).length;
-  $('txt-pendientes').textContent = pend.length + (nFichas ? ' (+' + nFichas + ' fichas)' : '');
+  const nFichas = Object.keys(prodPend).length, nFotos = Object.keys(fotosPend).length;
+  $('txt-pendientes').textContent = pend.length + (nFichas ? ' (+' + nFichas + ' fichas)' : '') + (nFotos ? ' (+' + nFotos + ' fotos)' : '');
   $('txt-sync').textContent = ajustes.ultimaSync
     ? 'Última sincronización: ' + new Date(ajustes.ultimaSync).toLocaleString('es-ES')
     : 'Nunca sincronizado';
@@ -318,7 +323,8 @@ async function abrirFormulario(codigo, opciones_) {
   const op = opciones_ || {};
   pendientesCache = await idb.todos('pendientes');
   const p = catalogo[codigo] || {};
-  actual = { codigo: codigo, existe: !!catalogo[codigo], sinCodigo: !!op.sinCodigo || /^INT-/.test(codigo), tipoProducto: p.tipo || 'CONSUMIBLE', categoria: p.categoria || '' };
+  actual = { codigo: codigo, existe: !!catalogo[codigo], sinCodigo: !!op.sinCodigo || /^INT-/.test(codigo),
+             tipoProducto: p.tipo || 'CONSUMIBLE', categoria: p.categoria || '', fotoUrl: '' };
 
   pintarCabeceraProducto();
   $('f-codigo').textContent = actual.sinCodigo ? 'Sin código de barras (' + codigo + ')' : codigo;
@@ -347,7 +353,95 @@ async function abrirFormulario(codigo, opciones_) {
 
   cambiarTipo('ENTRADA');
   mostrar('formulario');
+  pintarFoto();
+  $('f-off').textContent = '';
   if (actual.sinCodigo && !p.nombre) setTimeout(function () { $('p-nombre').focus(); }, 100);
+  if (!actual.sinCodigo && !p.nombre) consultarOFF(codigo);
+}
+
+/* ---------- Open Food Facts (desde el móvil, si hay red) ---------- */
+async function consultarOFF(codigo) {
+  if (!navigator.onLine) { $('f-off').textContent = 'Sin conexión: se buscará en Open Food Facts al sincronizar.'; return; }
+  $('f-off').textContent = 'Buscando en Open Food Facts…';
+  const ctrl = new AbortController();
+  const t = setTimeout(function () { ctrl.abort(); }, 6000);
+  try {
+    const url = 'https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(codigo) +
+      '.json?fields=product_name,product_name_es,brands,product_quantity,product_quantity_unit,image_front_small_url';
+    const r = await fetch(url, { signal: ctrl.signal });
+    const j = r.ok ? await r.json() : null;
+    if (!actual || actual.codigo !== codigo) return; // el usuario ya cambió de producto
+    const prod = j && j.status === 1 ? j.product : null;
+    const nombre = prod ? (prod.product_name_es || prod.product_name || '') : '';
+    if (!nombre) { $('f-off').textContent = 'No está en Open Food Facts. Escribe el nombre o haz una foto.'; return; }
+    if (!$('p-nombre').value) $('p-nombre').value = nombre;
+    const marca = String(prod.brands || '').split(',')[0].trim();
+    if (!$('p-marca').value && marca) $('p-marca').value = marca;
+    const cont = convertirCantidad(prod.product_quantity, prod.product_quantity_unit);
+    if (!$('p-contenido').value && cont.contenido) { $('p-contenido').value = String(cont.contenido).replace('.', ','); $('p-unidad').value = cont.unidad; }
+    if (prod.image_front_small_url) actual.fotoUrl = prod.image_front_small_url;
+    $('f-nombre').textContent = $('p-nombre').value + ($('p-marca').value ? ' · ' + $('p-marca').value : '');
+    $('f-off').textContent = '✓ Datos de Open Food Facts. Revisa el nombre y elige la categoría.';
+    pintarFoto();
+  } catch (e) {
+    if (actual && actual.codigo === codigo) $('f-off').textContent = 'Open Food Facts no responde; se buscará al sincronizar.';
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function convertirCantidad(q, u) {
+  const n = Number(q);
+  if (!n || n <= 0) return { contenido: '', unidad: '' };
+  u = String(u || 'g').toLowerCase();
+  if (u === 'g') return n >= 1000 ? { contenido: n / 1000, unidad: 'kg' } : { contenido: n, unidad: 'g' };
+  if (u === 'ml') return n >= 1000 ? { contenido: n / 1000, unidad: 'litros' } : { contenido: n, unidad: 'ml' };
+  if (u === 'kg') return { contenido: n, unidad: 'kg' };
+  if (u === 'l') return { contenido: n, unidad: 'litros' };
+  return { contenido: '', unidad: '' };
+}
+
+/* ---------- Fotos ---------- */
+function pintarFoto() {
+  const img = $('f-foto');
+  const p = catalogo[actual.codigo] || {};
+  const src = fotosPend[actual.codigo] || actual.fotoUrl ||
+    (p.foto_url && /openfoodfacts/.test(p.foto_url) ? p.foto_url : '');
+  img.classList.toggle('oculto', !src);
+  if (src) img.src = src;
+  $('p-foto').textContent = (fotosPend[actual.codigo] || (p.foto_url && !/openfoodfacts/.test(p.foto_url))) ? '📷 Repetir foto' : '📷 Hacer foto del producto';
+}
+
+async function tomarFoto(ev) {
+  const archivo = ev.target.files && ev.target.files[0];
+  ev.target.value = '';
+  if (!archivo) return;
+  try {
+    const dataUrl = await reducirImagen(archivo, 1000, 0.7);
+    fotosPend[actual.codigo] = dataUrl;
+    await idb.poner('kv', fotosPend, 'fotosPend');
+    pintarFoto();
+    toast('Foto guardada en el móvil; se subirá al sincronizar');
+  } catch (e) {
+    toast('No se pudo procesar la foto: ' + e.message, 4000);
+  }
+}
+
+function reducirImagen(archivo, maxLado, calidad) {
+  return new Promise(function (res, rej) {
+    const url = URL.createObjectURL(archivo);
+    const img = new Image();
+    img.onload = function () {
+      const k = Math.min(1, maxLado / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL('image/jpeg', calidad));
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); rej(new Error('imagen no válida')); };
+    img.src = url;
+  });
 }
 
 function pintarCabeceraProducto() {
@@ -512,22 +606,19 @@ function fichaFormulario() {
     tipo: actual.tipoProducto,
     contenido: contenido === '' ? '' : Number(contenido.replace(',', '.')),
     unidad: contenido === '' ? '' : $('p-unidad').value,
-    linea_objetivo: $('p-linea').value
+    linea_objetivo: $('p-linea').value,
+    foto_url: actual.fotoUrl || ''
   };
 }
 
-async function guardarMovimiento(seguir) {
-  const cantidad = parseInt($('f-cantidad').value, 10);
-  if (!cantidad || cantidad < 1) { toast('La cantidad debe ser 1 o más'); return; }
-  if (cadAnio && !cadMes) { toast('Elige también el mes de caducidad'); return; }
+// Valida la ficha y guarda en cola los campos que han cambiado. Devuelve false si falta algo.
+async function guardarFicha() {
   const ficha = fichaFormulario();
-  if (actual.sinCodigo && !ficha.nombre) { toast('Un artículo sin código necesita nombre'); $('f-ficha').classList.remove('oculto'); return; }
-  if (ficha.contenido !== '' && !(ficha.contenido > 0)) { toast('El contenido debe ser un número mayor que 0'); return; }
-
-  // ¿Ha cambiado la ficha? Solo se envían los campos con cambios
+  if (actual.sinCodigo && !ficha.nombre) { toast('Un artículo sin código necesita nombre'); $('f-ficha').classList.remove('oculto'); return false; }
+  if (ficha.contenido !== '' && !(ficha.contenido > 0)) { toast('El contenido debe ser un número mayor que 0'); return false; }
   const antes = catalogo[actual.codigo] || {};
   const cambios = {};
-  ['nombre', 'marca', 'categoria', 'tipo', 'contenido', 'unidad', 'linea_objetivo'].forEach(function (k) {
+  ['nombre', 'marca', 'categoria', 'tipo', 'contenido', 'unidad', 'linea_objetivo', 'foto_url'].forEach(function (k) {
     const nuevo = ficha[k], viejo = antes[k] === undefined || antes[k] === null ? '' : antes[k];
     if (nuevo !== '' && String(nuevo) !== String(viejo)) cambios[k] = nuevo;
   });
@@ -538,6 +629,22 @@ async function guardarMovimiento(seguir) {
     await idb.poner('kv', prodPend, 'prodPend');
     await idb.poner('kv', catalogo, 'catalogo');
   }
+  return true;
+}
+
+async function guardarSoloFicha() {
+  if (!(await guardarFicha())) return;
+  toast('Ficha guardada: ' + nombreDe(actual.codigo));
+  mostrar('inicio');
+  await refrescarEstado();
+  sincronizar(false);
+}
+
+async function guardarMovimiento(seguir) {
+  const cantidad = parseInt($('f-cantidad').value, 10);
+  if (!cantidad || cantidad < 1) { toast('La cantidad debe ser 1 o más'); return; }
+  if (cadAnio && !cadMes) { toast('Elige también el mes de caducidad'); return; }
+  if (!(await guardarFicha())) return;
 
   const mov = {
     id: (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2)),
@@ -728,7 +835,7 @@ async function sincronizar(manual) {
 
     const lotes = [];
     for (let i = 0; i < pendientes.length; i += 100) lotes.push(pendientes.slice(i, i + 100));
-    if (!lotes.length && fichas.length) lotes.push([]);
+    if (!lotes.length && (fichas.length || Object.keys(fotosPend).length)) lotes.push([]);
 
     for (let i = 0; i < lotes.length; i++) {
       const movimientos = lotes[i].map(function (m) { const c = Object.assign({}, m); delete c._producto; return c; });
@@ -741,6 +848,14 @@ async function sincronizar(manual) {
         productos.forEach(function (f) { if (prodPend[f.codigo] === f) delete prodPend[f.codigo]; });
         await idb.poner('kv', prodPend, 'prodPend');
       }
+    }
+
+    // Fotos (después de las fichas, para que el producto ya exista en la hoja)
+    for (const c of Object.keys(fotosPend)) {
+      const dataUrl = fotosPend[c];
+      await llamar('POST', { accion: 'foto', codigo: c, datos: dataUrl.split(',')[1] });
+      if (fotosPend[c] === dataUrl) delete fotosPend[c];
+      await idb.poner('kv', fotosPend, 'fotosPend');
     }
 
     const d = await llamar('GET', { accion: 'datos' });
@@ -796,7 +911,7 @@ async function probarConexion() {
   $('a-resultado').textContent = 'Probando…';
   try {
     const r = await llamar('GET', { accion: 'ping' });
-    $('a-resultado').textContent = '✅ Conexión correcta' + (r.version >= 2 ? '' : ' (servidor antiguo: actualiza Codigo.gs)') + '. Pulsa Guardar.';
+    $('a-resultado').textContent = '✅ Conexión correcta' + (r.version >= 2.1 ? '' : ' (servidor antiguo: actualiza Codigo.gs a la v2.1)') + '. Pulsa Guardar.';
   } catch (e) {
     $('a-resultado').textContent = '❌ ' + e.message;
   } finally {

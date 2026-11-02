@@ -124,6 +124,8 @@
       <h2 id="f-nombre">Producto</h2>
       <div class="codigo" id="f-codigo"></div>
       <div id="f-etiquetas"></div>
+      <img id="f-foto" class="oculto" alt="" style="max-height:130px;max-width:100%;border-radius:8px;margin-top:8px">
+      <div class="muted" id="f-off"></div>
       <div class="muted" id="f-stock"></div>
       <button class="enlace" id="f-editar">✏️ Editar ficha del producto</button>
       <div id="f-ficha" class="oculto">
@@ -145,6 +147,10 @@
         </div>
         <label>Cuenta para el objetivo (opcional)</label>
         <select id="p-linea"></select>
+        <label>Foto (para productos que no salen en Open Food Facts)</label>
+        <input id="p-foto-input" type="file" accept="image/*" capture="environment" class="oculto">
+        <button class="btn btn-sec" id="p-foto">📷 Hacer foto del producto</button>
+        <button class="btn btn-sec" id="p-guardar-ficha">💾 Guardar solo la ficha</button>
       </div>
     </div>
 
@@ -246,6 +252,6 @@
 </main>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.0.0"></script>
+<script src="app.js?v=2.1.0"></script>
 </body>
 </html>
