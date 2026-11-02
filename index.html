@@ -51,6 +51,17 @@
   #guia { position:absolute; left:10%; right:10%; top:45%; height:3px; background:rgba(255,80,80,.9); box-shadow:0 0 8px red; }
   #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#222; color:#fff; padding:12px 18px; border-radius:10px; font-size:16px; z-index:20; max-width:90%; text-align:center; }
   h2 { margin:0 0 4px; font-size:21px; }
+  .chips .chip { min-width:64px; padding:10px 12px; font-size:16px; }
+  .meses { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:8px; }
+  .meses button { border:1px solid var(--verde); background:#fff; color:var(--verde); border-radius:10px; padding:12px 0; font-size:17px; font-weight:600; }
+  .meses button.activo { background:var(--verde); color:#fff; }
+  .meses.desactivado { opacity:.35; pointer-events:none; }
+  .prod { background:#fff; border-radius:12px; padding:12px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .prod-cab { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
+  .prod-total { font-size:20px; color:var(--verde); }
+  .lote { font-size:14px; color:var(--gris); margin-top:4px; }
+  .caducado { color:var(--rojo); font-weight:700; }
+  .pronto { color:#a86a00; font-weight:700; }
   .codigo { font-family:monospace; color:var(--gris); }
 </style>
 </head>
@@ -74,6 +85,7 @@
     </div>
 
     <button class="btn btn-principal" id="btn-escanear">📷 Escanear</button>
+    <button class="btn btn-sec" id="btn-stock">📦 Ver stock</button>
     <div class="fila">
       <input id="codigo-manual" inputmode="numeric" placeholder="o escribe el código">
       <button class="btn btn-sec" id="btn-codigo-manual" style="flex:0 0 90px;margin:0">OK</button>
@@ -127,11 +139,9 @@
         <div class="chips" id="f-lotes"></div>
       </div>
 
-      <label>Caducidad</label>
-      <div class="fila">
-        <select id="f-mes"></select>
-        <select id="f-anio"></select>
-      </div>
+      <label>Caducidad: <b id="f-cad-texto">sin caducidad</b></label>
+      <div class="chips" id="f-anios"></div>
+      <div class="meses" id="f-meses"></div>
 
       <div class="fila">
         <div><label>Almacén</label><select id="f-almacen"></select></div>
@@ -142,8 +152,19 @@
       <input id="f-nota">
     </div>
 
-    <button class="btn btn-principal" id="f-guardar">Guardar</button>
-    <button class="btn btn-sec" id="f-cancelar">Cancelar</button>
+    <button class="btn btn-principal" id="f-guardar-seguir">Guardar y escanear otro</button>
+    <div class="fila">
+      <button class="btn btn-sec" id="f-guardar">Guardar y terminar</button>
+      <button class="btn btn-sec" id="f-cancelar">Cancelar</button>
+    </div>
+  </section>
+
+  <!-- STOCK -->
+  <section id="pantalla-stock" class="oculto">
+    <input id="s-buscar" placeholder="🔎 Buscar por nombre, marca o código">
+    <div class="muted" id="s-resumen" style="margin:8px 2px"></div>
+    <div id="s-lista"></div>
+    <button class="btn btn-sec" id="s-volver">Volver</button>
   </section>
 
   <!-- AJUSTES -->

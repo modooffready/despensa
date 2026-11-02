@@ -1,6 +1,6 @@
 /* Service worker: guarda la app en el móvil para que abra sin conexión.
  * Si cambias algún archivo, sube también este con el número de versión aumentado. */
-const CACHE = 'despensa-v1.2.0';
+const CACHE = 'despensa-v1.3.0';
 const ARCHIVOS = ['./', './index.html', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function (e) {
