@@ -63,6 +63,14 @@
   .caducado { color:var(--rojo); font-weight:700; }
   .pronto { color:#a86a00; font-weight:700; }
   .codigo { font-family:monospace; color:var(--gris); }
+  .grupo { margin:18px 2px 8px; font-weight:700; color:var(--verde); font-size:16px; border-bottom:2px solid var(--verde); padding-bottom:4px; }
+  .tag-cat { display:inline-block; font-size:12px; font-weight:700; padding:2px 8px; border-radius:10px; background:#e6efe8; color:var(--verde); margin-top:6px; }
+  .tag-equipo { background:#e8e6f3; color:#4a3f8a; }
+  .enlace { background:none; border:0; color:var(--verde); text-decoration:underline; padding:8px 0; font-size:16px; }
+  .lista-item { display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #eee; }
+  .lista-item.inactivo span { color:#aaa; text-decoration:line-through; }
+  .lista-item button { border:0; background:#e6e1d6; border-radius:8px; padding:6px 10px; font-size:14px; }
+  .segmentado.peq button { padding:10px 4px; font-size:15px; }
 </style>
 </head>
 <body>
@@ -85,7 +93,10 @@
     </div>
 
     <button class="btn btn-principal" id="btn-escanear">📷 Escanear</button>
-    <button class="btn btn-sec" id="btn-stock">📦 Ver stock</button>
+    <div class="fila">
+      <button class="btn btn-sec" id="btn-stock">📦 Ver stock</button>
+      <button class="btn btn-sec" id="btn-sin-codigo">➕ Sin código</button>
+    </div>
     <div class="fila">
       <input id="codigo-manual" inputmode="numeric" placeholder="o escribe el código">
       <button class="btn btn-sec" id="btn-codigo-manual" style="flex:0 0 90px;margin:0">OK</button>
@@ -103,7 +114,7 @@
     <p class="muted" id="txt-escaner">Apunta al código de barras</p>
     <div class="fila">
       <button class="btn btn-sec" id="btn-linterna">🔦 Linterna</button>
-      <button class="btn btn-sec" id="btn-cancelar-escaner">Cancelar</button>
+      <button class="btn btn-sec" id="btn-cancelar-escaner">Terminar</button>
     </div>
   </section>
 
@@ -112,12 +123,28 @@
     <div class="tarjeta">
       <h2 id="f-nombre">Producto</h2>
       <div class="codigo" id="f-codigo"></div>
+      <div id="f-etiquetas"></div>
       <div class="muted" id="f-stock"></div>
-      <div id="f-nuevo" class="oculto">
-        <label>Nombre (opcional, se puede completar luego)</label>
-        <input id="f-nombre-nuevo" placeholder="Ej.: Lentejas cocidas 400 g">
+      <button class="enlace" id="f-editar">✏️ Editar ficha del producto</button>
+      <div id="f-ficha" class="oculto">
+        <label>Nombre</label>
+        <input id="p-nombre" placeholder="Ej.: Lentejas cocidas 400 g">
         <label>Marca (opcional)</label>
-        <input id="f-marca-nueva">
+        <input id="p-marca">
+        <label>Categoría</label>
+        <div class="chips" id="p-categorias"></div>
+        <label>Tipo</label>
+        <div class="segmentado peq">
+          <button id="p-consumible" class="activo">Se consume</button>
+          <button id="p-equipo">Equipo (no se gasta)</button>
+        </div>
+        <label>Contenido de cada unidad (opcional)</label>
+        <div class="fila">
+          <input id="p-contenido" type="text" inputmode="decimal" placeholder="Ej.: 1 o 0,5">
+          <select id="p-unidad"></select>
+        </div>
+        <label>Cuenta para el objetivo (opcional)</label>
+        <select id="p-linea"></select>
       </div>
     </div>
 
@@ -143,9 +170,11 @@
       <div class="chips" id="f-anios"></div>
       <div class="meses" id="f-meses"></div>
 
-      <div class="fila">
-        <div><label>Almacén</label><select id="f-almacen"></select></div>
-        <div><label>Estante</label><select id="f-estante"></select></div>
+      <label>Estancia</label>
+      <select id="f-almacen"></select>
+      <div id="f-estante-caja">
+        <label>Ubicación</label>
+        <select id="f-estante"></select>
       </div>
 
       <label>Nota (opcional)</label>
@@ -161,6 +190,11 @@
 
   <!-- STOCK -->
   <section id="pantalla-stock" class="oculto">
+    <div class="segmentado peq" style="margin-bottom:10px">
+      <button id="s-v-producto" class="activo">Producto</button>
+      <button id="s-v-categoria">Categoría</button>
+      <button id="s-v-estancia">Estancia</button>
+    </div>
     <input id="s-buscar" placeholder="🔎 Buscar por nombre, marca o código">
     <div class="muted" id="s-resumen" style="margin:8px 2px"></div>
     <div id="s-lista"></div>
@@ -178,12 +212,32 @@
       <input id="a-token" type="password" autocomplete="off">
       <label>Tu nombre (quién hace los movimientos)</label>
       <input id="a-usuario" placeholder="Sergio">
-      <label>Almacén por defecto</label>
+      <label>Estancia por defecto</label>
       <select id="a-almacen"></select>
       <button class="btn btn-principal" id="a-guardar">Guardar</button>
       <button class="btn btn-sec" id="a-probar">Probar conexión</button>
       <div class="muted" id="a-resultado"></div>
     </div>
+
+    <div class="tarjeta">
+      <h2>Listas</h2>
+      <p class="muted">Categorías, estancias y ubicaciones. Se guardan en la hoja (necesita conexión). No se pueden renombrar para no romper el histórico: desactiva la vieja y añade la nueva.</p>
+      <div class="segmentado peq">
+        <button id="l-t-CATEGORIA" class="activo">Categorías</button>
+        <button id="l-t-ESTANCIA">Estancias</button>
+        <button id="l-t-UBICACION">Ubicaciones</button>
+      </div>
+      <div id="l-estancia-caja" class="oculto">
+        <label>Ubicaciones de la estancia</label>
+        <select id="l-estancia"></select>
+      </div>
+      <div id="l-items"></div>
+      <div class="fila" style="margin-top:10px">
+        <input id="l-nuevo" placeholder="Nuevo valor">
+        <button class="btn btn-sec" id="l-anadir" style="flex:0 0 100px;margin:0">Añadir</button>
+      </div>
+    </div>
+
     <div class="tarjeta">
       <div class="muted">Versión <span id="a-version"></span></div>
       <button class="btn btn-sec" id="a-volver">Volver</button>
@@ -192,6 +246,6 @@
 </main>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=1.3.1"></script>
+<script src="app.js?v=2.0.0"></script>
 </body>
 </html>

@@ -1,14 +1,16 @@
 'use strict';
 /* =========================================================
- * DESPENSA — app del móvil (Fase 1.2)
+ * DESPENSA — app del móvil (v2.0)
  * Escanear → guardar sin conexión → sincronizar con la Sheet
+ * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '1.3.1';
-const ALMACENES = ['Trastero Ávila', 'Sotalbo'];
-const ESTANTES = ['1', '2', '3', '4', '5', '6'];
+const VERSION = '2.0.0';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
+const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
+// Solo se usan si la app aún no ha descargado la pestaña Config
+const ESTANCIA_RESERVA = 'Trastero Ávila';
 
 /* ---------- Base de datos local (IndexedDB) ---------- */
 let dbPromesa;
@@ -48,18 +50,26 @@ const idb = {
 };
 
 /* ---------- Estado ---------- */
-let config = {};
-let catalogo = {};      // codigo -> producto
-let stockServidor = []; // [{codigo, caducidad, almacen, estante, stock}]
+let ajustes = {};        // ajustes de este móvil (url, token, usuario…)
+let catalogo = {};       // codigo -> producto
+let stockServidor = [];  // [{codigo, caducidad, almacen, estante, stock}]
+let listas = [];         // [{tipo, valor, estancia, activo}] (pestaña Config)
+let objetivos = [];      // [{id, categoria, descripcion, almacen, …}]
+let prodPend = {};       // cambios de fichas de producto aún no enviados
 let sincronizando = false;
 let ultimoError = '';
-let actual = null;      // producto en el formulario
+let actual = null;       // producto abierto en el formulario
 let tipoActual = 'ENTRADA';
-let cadAnio = '', cadMes = '';  // caducidad elegida en el formulario
-const ultimaCad = {};            // última caducidad usada por código (para la ráfaga)
+let cadAnio = '', cadMes = '';
+const ultimaCad = {};
+let pendientesCache = [];
+let vistaStock = 'producto';
+let tipoLista = 'CATEGORIA';
 
 const $ = function (id) { return document.getElementById(id); };
 function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function cada(lista, fn) { Array.prototype.forEach.call(lista, fn); }
+function bonito(cat) { return String(cat || '').replace(/_/g, ' ').toLowerCase().replace(/^./, function (c) { return c.toUpperCase(); }); }
 
 let toastTimer;
 function toast(msg, ms) {
@@ -78,23 +88,37 @@ function mostrar(nombre) {
   window.scrollTo(0, 0);
 }
 
-async function guardarConfig() { await idb.poner('kv', config, 'config'); }
+async function guardarAjustesLocales() { await idb.poner('kv', ajustes, 'config'); }
+
+/* ---------- Listas (Config) ---------- */
+function valores(tipo, estancia, incluirInactivos) {
+  return listas.filter(function (x) {
+    return x.tipo === tipo && (incluirInactivos || x.activo) &&
+      (tipo !== 'UBICACION' || x.estancia === estancia);
+  }).map(function (x) { return x.valor; });
+}
+function categorias() { return valores('CATEGORIA'); }
+function estancias() { const e = valores('ESTANCIA'); return e.length ? e : [ESTANCIA_RESERVA]; }
+function ubicacionesDe(est) { return valores('UBICACION', est); }
 
 /* ---------- Arranque ---------- */
 async function iniciar() {
-  config = (await idb.get('kv', 'config')) || {};
+  ajustes = (await idb.get('kv', 'config')) || {};
   catalogo = (await idb.get('kv', 'catalogo')) || {};
   stockServidor = (await idb.get('kv', 'stock')) || [];
+  listas = (await idb.get('kv', 'listas')) || [];
+  objetivos = (await idb.get('kv', 'objetivos')) || [];
+  prodPend = (await idb.get('kv', 'prodPend')) || {};
 
-  // Pedir al navegador que no borre los datos locales
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn(e); });
 
-  montarSelects();
+  montarCaducidad();
+  opciones($('p-unidad'), UNIDADES);
   enlazarEventos();
   $('a-version').textContent = VERSION;
 
-  if (!config.url || !config.token || !config.usuario) abrirAjustes();
+  if (!ajustes.url || !ajustes.token || !ajustes.usuario) abrirAjustes();
   else mostrar('inicio');
 
   await refrescarEstado();
@@ -110,18 +134,19 @@ async function iniciar() {
 }
 
 function opciones(select, lista, vacia) {
-  select.innerHTML = (vacia ? '<option value="">' + esc(vacia) + '</option>' : '') +
+  select.innerHTML = (vacia !== undefined ? '<option value="">' + esc(vacia) + '</option>' : '') +
     lista.map(function (o) {
       const v = typeof o === 'object' ? o.v : o, t = typeof o === 'object' ? o.t : o;
       return '<option value="' + esc(v) + '">' + esc(t) + '</option>';
     }).join('');
 }
 
-function montarSelects() {
-  montarCaducidad();
-  opciones($('f-almacen'), ALMACENES);
-  opciones($('f-estante'), ESTANTES.map(function (e) { return { v: e, t: 'Estante ' + e }; }));
-  opciones($('a-almacen'), ALMACENES);
+// Si el valor guardado ya no está en la lista (p. ej. desactivado), se añade para no perderlo
+function opcionesConValor(select, lista, valor, vacia) {
+  const l = lista.slice();
+  if (valor && l.indexOf(valor) < 0) l.push(valor);
+  opciones(select, l, vacia);
+  select.value = valor || (vacia !== undefined ? '' : (l[0] || ''));
 }
 
 function enlazarEventos() {
@@ -129,8 +154,7 @@ function enlazarEventos() {
   $('btn-sincronizar').onclick = function () { sincronizar(true); };
   $('btn-escanear').onclick = abrirEscaner;
   $('btn-stock').onclick = abrirStock;
-  $('s-buscar').oninput = pintarStock;
-  $('s-volver').onclick = function () { mostrar('inicio'); };
+  $('btn-sin-codigo').onclick = function () { abrirFormulario(codigoInterno(), { sinCodigo: true }); };
   $('btn-codigo-manual').onclick = function () {
     const c = $('codigo-manual').value.trim();
     if (!c) { toast('Escribe un código'); return; }
@@ -140,20 +164,35 @@ function enlazarEventos() {
   $('btn-cancelar-escaner').onclick = function () { mostrar('inicio'); };
   $('btn-linterna').onclick = alternarLinterna;
 
+  $('f-editar').onclick = function () { $('f-ficha').classList.toggle('oculto'); };
+  $('p-consumible').onclick = function () { ponerTipoProducto('CONSUMIBLE'); };
+  $('p-equipo').onclick = function () { ponerTipoProducto('EQUIPO'); };
   $('f-entrada').onclick = function () { cambiarTipo('ENTRADA'); };
   $('f-salida').onclick = function () { cambiarTipo('SALIDA'); };
   $('f-menos').onclick = function () { cambiarCantidad(-1); };
   $('f-mas').onclick = function () { cambiarCantidad(1); };
+  $('f-almacen').onchange = function () { pintarUbicaciones(''); pintarLineas(); };
   $('f-guardar').onclick = function () { guardarMovimiento(false); };
   $('f-guardar-seguir').onclick = function () { guardarMovimiento(true); };
   $('f-cancelar').onclick = function () { mostrar('inicio'); };
 
+  $('s-buscar').oninput = pintarStock;
+  $('s-volver').onclick = function () { mostrar('inicio'); };
+  ['producto', 'categoria', 'estancia'].forEach(function (v) {
+    $('s-v-' + v).onclick = function () { vistaStock = v; pintarStock(); };
+  });
+
   $('a-guardar').onclick = guardarAjustes;
   $('a-probar').onclick = probarConexion;
   $('a-volver').onclick = function () {
-    if (!config.url || !config.token || !config.usuario) { toast('Rellena y guarda los ajustes primero'); return; }
+    if (!ajustes.url || !ajustes.token || !ajustes.usuario) { toast('Rellena y guarda los ajustes primero'); return; }
     mostrar('inicio');
   };
+  ['CATEGORIA', 'ESTANCIA', 'UBICACION'].forEach(function (t) {
+    $('l-t-' + t).onclick = function () { tipoLista = t; pintarListas(); };
+  });
+  $('l-estancia').onchange = pintarListas;
+  $('l-anadir').onclick = anadirALista;
 }
 
 /* ---------- Estado e historial ---------- */
@@ -162,11 +201,17 @@ async function refrescarEstado() {
   $('punto-red').className = 'punto ' + (online ? 'on' : 'off');
   $('txt-red').textContent = sincronizando ? 'Sincronizando…' : (online ? 'Con conexión' : 'Sin conexión');
   const pend = await idb.todos('pendientes');
-  $('txt-pendientes').textContent = pend.length;
-  $('txt-sync').textContent = config.ultimaSync
-    ? 'Última sincronización: ' + new Date(config.ultimaSync).toLocaleString('es-ES')
+  const nFichas = Object.keys(prodPend).length;
+  $('txt-pendientes').textContent = pend.length + (nFichas ? ' (+' + nFichas + ' fichas)' : '');
+  $('txt-sync').textContent = ajustes.ultimaSync
+    ? 'Última sincronización: ' + new Date(ajustes.ultimaSync).toLocaleString('es-ES')
     : 'Nunca sincronizado';
   $('txt-error').textContent = ultimoError ? 'Último error: ' + ultimoError : '';
+}
+
+function nombreDe(codigo) {
+  const p = catalogo[codigo];
+  return (p && p.nombre) || codigo;
 }
 
 async function pintarHistorial() {
@@ -180,13 +225,12 @@ async function pintarHistorial() {
   if (!h.length) { lista.innerHTML = '<li class="muted">Todavía no hay movimientos</li>'; return; }
   lista.innerHTML = h.slice(0, 25).map(function (m) {
     const icono = m.estado === 'ok' ? '✅' : (m.estado === 'pendiente' ? '⏳' : '⚠️');
-    const nombre = m.nombre || (catalogo[m.codigo] && catalogo[m.codigo].nombre) || m.codigo;
     return '<li><div><span class="tag ' + esc(m.tipo) + '">' + esc(m.tipo) + '</span> ' +
-      esc(m.cantidad) + ' × ' + esc(nombre) +
-      '<div class="meta">' + esc(m.caducidad || 'sin cad.') + ' · ' + esc(m.almacen) + ' · est. ' + esc(m.estante) +
+      esc(m.cantidad) + ' × ' + esc(nombreDe(m.codigo) || m.nombre) +
+      '<div class="meta">' + esc(m.caducidad || 'sin cad.') + ' · ' + esc(m.almacen) + (m.estante ? ' · ' + esc(m.estante) : '') +
       ' · ' + new Date(m.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) +
       (m.estado !== 'ok' && m.estado !== 'pendiente' ? '<br><span class="error">' + esc(m.estado) + '</span>' : '') +
-      '</div></div><div title="' + esc(m.estado) + '">' + icono + '</div></li>';
+      '</div></div><div>' + icono + '</div></li>';
   }).join('');
 }
 
@@ -201,6 +245,7 @@ let stream = null, detector = null, escaneando = false, linterna = false;
 async function abrirEscaner() {
   if (!('BarcodeDetector' in window)) {
     toast('Este navegador no tiene lector de códigos. Escribe el código a mano.', 4000);
+    mostrar('inicio');
     $('codigo-manual').focus();
     return;
   }
@@ -263,30 +308,105 @@ async function alternarLinterna() {
 }
 
 /* ---------- Formulario ---------- */
-let pendientesCache = [];
+function codigoInterno() {
+  const r = (crypto.getRandomValues ? Array.from(crypto.getRandomValues(new Uint8Array(4))) : [Math.random() * 255, Math.random() * 255, Math.random() * 255, Math.random() * 255])
+    .map(function (b) { return Math.floor(b).toString(36).padStart(2, '0'); }).join('').toUpperCase().slice(0, 6);
+  return 'INT-' + r;
+}
 
-async function abrirFormulario(codigo) {
+async function abrirFormulario(codigo, opciones_) {
+  const op = opciones_ || {};
   pendientesCache = await idb.todos('pendientes');
-  const p = catalogo[codigo];
-  actual = { codigo: codigo, conocido: !!(p && p.nombre) };
+  const p = catalogo[codigo] || {};
+  actual = { codigo: codigo, existe: !!catalogo[codigo], sinCodigo: !!op.sinCodigo || /^INT-/.test(codigo), tipoProducto: p.tipo || 'CONSUMIBLE', categoria: p.categoria || '' };
 
-  $('f-nombre').textContent = actual.conocido ? p.nombre + (p.marca ? ' · ' + p.marca : '') : 'Producto nuevo';
-  $('f-codigo').textContent = codigo;
-  $('f-nuevo').classList.toggle('oculto', actual.conocido);
-  $('f-nombre-nuevo').value = '';
-  $('f-marca-nueva').value = '';
+  pintarCabeceraProducto();
+  $('f-codigo').textContent = actual.sinCodigo ? 'Sin código de barras (' + codigo + ')' : codigo;
+
+  // Ficha del producto
+  $('p-nombre').value = p.nombre || '';
+  $('p-marca').value = p.marca || '';
+  $('p-contenido').value = p.contenido === undefined || p.contenido === null ? '' : p.contenido;
+  $('p-unidad').value = p.unidad || 'uds';
+  pintarCategoriasFicha();
+  ponerTipoProducto(actual.tipoProducto);
+  const incompleta = !p.nombre || !p.categoria;
+  $('f-ficha').classList.toggle('oculto', !incompleta);
+
+  // Movimiento
   $('f-cantidad').value = 1;
   $('f-nota').value = '';
   const previa = (ultimaCad[codigo] || '').split('-');
   ponerCaducidad(previa[0] || '', previa[1] || '');
-  $('f-almacen').value = config.ultimoAlmacen || config.almacen || ALMACENES[0];
-  $('f-estante').value = config.ultimoEstante || ESTANTES[0];
+  opcionesConValor($('f-almacen'), estancias(), ajustes.ultimoAlmacen || ajustes.almacen || estancias()[0]);
+  pintarUbicaciones(ajustes.ultimoEstante || '');
+  pintarLineas(p.linea_objetivo || '');
 
   const total = lotesDe(codigo).reduce(function (s, l) { return s + l.stock; }, 0);
-  $('f-stock').textContent = 'En stock (según el último dato): ' + total;
+  $('f-stock').textContent = actual.existe ? 'En stock (según el último dato): ' + total : '';
 
   cambiarTipo('ENTRADA');
   mostrar('formulario');
+  if (actual.sinCodigo && !p.nombre) setTimeout(function () { $('p-nombre').focus(); }, 100);
+}
+
+function pintarCabeceraProducto() {
+  const p = catalogo[actual.codigo] || {};
+  $('f-nombre').textContent = p.nombre ? p.nombre + (p.marca ? ' · ' + p.marca : '') : (actual.sinCodigo ? 'Artículo sin código' : 'Producto nuevo');
+  const cat = actual.categoria;
+  $('f-etiquetas').innerHTML = (cat ? '<span class="tag-cat">' + esc(bonito(cat)) + '</span> ' : '') +
+    (actual.tipoProducto === 'EQUIPO' ? '<span class="tag-cat tag-equipo">Equipo</span>' : '');
+}
+
+function pintarCategoriasFicha() {
+  const lista = categorias().slice();
+  if (actual.categoria && lista.indexOf(actual.categoria) < 0) lista.push(actual.categoria);
+  if (!lista.length) { $('p-categorias').innerHTML = '<span class="muted">Sincroniza para descargar las categorías.</span>'; return; }
+  $('p-categorias').innerHTML = lista.map(function (c) {
+    return '<button class="chip' + (c === actual.categoria ? ' activo' : '') + '" data-c="' + esc(c) + '">' + esc(bonito(c)) + '</button>';
+  }).join('');
+  cada($('p-categorias').children, function (b) {
+    b.onclick = function () {
+      actual.categoria = b.dataset.c;
+      cada($('p-categorias').children, function (x) { x.classList.toggle('activo', x === b); });
+      pintarCabeceraProducto();
+      pintarLineas($('p-linea').value);
+    };
+  });
+}
+
+function ponerTipoProducto(t) {
+  actual.tipoProducto = t;
+  $('p-consumible').classList.toggle('activo', t === 'CONSUMIBLE');
+  $('p-equipo').classList.toggle('activo', t === 'EQUIPO');
+  pintarCabeceraProducto();
+}
+
+function pintarUbicaciones(preferida) {
+  const est = $('f-almacen').value;
+  const ubis = ubicacionesDe(est);
+  $('f-estante-caja').classList.toggle('oculto', !ubis.length);
+  if (!ubis.length) { opciones($('f-estante'), []); return; }
+  opciones($('f-estante'), ubis);
+  $('f-estante').value = ubis.indexOf(preferida) >= 0 ? preferida : ubis[0];
+}
+
+// Líneas de objetivo de la estancia elegida, primero las de la misma categoría
+function pintarLineas(valor) {
+  const est = $('f-almacen').value;
+  const actualValor = valor !== undefined ? valor : $('p-linea').value;
+  const delSitio = objetivos.filter(function (o) { return o.almacen === est; });
+  delSitio.sort(function (a, b) {
+    const ma = a.categoria === actual.categoria ? 0 : 1, mb = b.categoria === actual.categoria ? 0 : 1;
+    return ma - mb || String(a.categoria).localeCompare(String(b.categoria)) || String(a.descripcion).localeCompare(String(b.descripcion));
+  });
+  const ops = delSitio.map(function (o) { return { v: o.id, t: bonito(o.categoria) + ' · ' + o.descripcion }; });
+  if (actualValor && !ops.some(function (o) { return o.v === actualValor; })) {
+    const o = objetivos.find(function (x) { return x.id === actualValor; });
+    ops.unshift({ v: actualValor, t: o ? o.almacen + ' · ' + o.descripcion : actualValor });
+  }
+  opciones($('p-linea'), ops, objetivos.length ? '— Ninguno —' : '— Sin objetivos descargados —');
+  $('p-linea').value = actualValor || '';
 }
 
 // Stock por lote combinando el último dato del servidor y los movimientos pendientes del móvil
@@ -309,8 +429,42 @@ function lotesTodos(pendientes) {
   });
   return porCodigo;
 }
-
 function lotesDe(codigo) { return lotesTodos(pendientesCache)[codigo] || []; }
+
+function cambiarTipo(tipo) {
+  tipoActual = tipo;
+  $('f-entrada').classList.toggle('activo', tipo === 'ENTRADA');
+  $('f-salida').classList.toggle('activo', tipo === 'SALIDA');
+  $('f-salida').classList.toggle('salida', tipo === 'SALIDA');
+  const lotes = tipo === 'SALIDA' ? lotesDe(actual.codigo) : [];
+  $('f-lotes-caja').classList.toggle('oculto', !lotes.length);
+  $('f-lotes').innerHTML = lotes.map(function (l, i) {
+    return '<button class="chip" data-i="' + i + '">' + esc(l.caducidad || 'sin cad.') + ' · ' +
+      esc(l.almacen) + (l.estante ? ' ' + esc(l.estante) : '') + ' · ' + l.stock + ' uds</button>';
+  }).join('');
+  cada($('f-lotes').children, function (b) {
+    b.onclick = function () { elegirLote(lotes[Number(b.dataset.i)], b); };
+  });
+  if (lotes.length) elegirLote(lotes[0], $('f-lotes').children[0]); // el que caduca antes
+}
+
+function elegirLote(l, boton) {
+  cada($('f-lotes').children, function (b) { b.classList.remove('activo'); });
+  boton.classList.add('activo');
+  const partes = (l.caducidad || '').split('-');
+  ponerCaducidad(partes[0] || '', partes[1] || '');
+  if (l.almacen) { opcionesConValor($('f-almacen'), estancias(), l.almacen); }
+  pintarUbicaciones(l.estante);
+  if (l.estante && $('f-estante').value !== l.estante) {
+    // ubicación antigua que ya no está en la lista
+    opcionesConValor($('f-estante'), ubicacionesDe(l.almacen), l.estante);
+    $('f-estante-caja').classList.remove('oculto');
+  }
+}
+
+function cambiarCantidad(d) {
+  $('f-cantidad').value = Math.max(1, (parseInt($('f-cantidad').value, 10) || 1) + d);
+}
 
 /* ---------- Caducidad con botones ---------- */
 function montarCaducidad() {
@@ -320,20 +474,19 @@ function montarCaducidad() {
   $('f-anios').innerHTML = anios.map(function (a) {
     return '<button class="chip" data-a="' + a + '">' + (a || 'Sin cad.') + '</button>';
   }).join('');
-  Array.prototype.forEach.call($('f-anios').children, function (b) {
+  cada($('f-anios').children, function (b) {
     b.onclick = function () { ponerCaducidad(b.dataset.a, b.dataset.a ? cadMes : ''); };
   });
   const nombres = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
   $('f-meses').innerHTML = nombres.map(function (n, i) {
     return '<button data-m="' + String(i + 1).padStart(2, '0') + '">' + n + '</button>';
   }).join('');
-  Array.prototype.forEach.call($('f-meses').children, function (b) {
+  cada($('f-meses').children, function (b) {
     b.onclick = function () { ponerCaducidad(cadAnio, b.dataset.m); };
   });
 }
 
 function ponerCaducidad(anio, mes) {
-  // Años anteriores o muy lejanos (p. ej. de un lote antiguo): añadir el botón si falta
   if (anio && !$('f-anios').querySelector('[data-a="' + anio + '"]')) {
     const b = document.createElement('button');
     b.className = 'chip'; b.dataset.a = anio; b.textContent = anio;
@@ -342,10 +495,75 @@ function ponerCaducidad(anio, mes) {
   }
   cadAnio = anio || '';
   cadMes = cadAnio ? (mes || '') : '';
-  Array.prototype.forEach.call($('f-anios').children, function (b) { b.classList.toggle('activo', b.dataset.a === cadAnio); });
-  Array.prototype.forEach.call($('f-meses').children, function (b) { b.classList.toggle('activo', b.dataset.m === cadMes); });
+  cada($('f-anios').children, function (b) { b.classList.toggle('activo', b.dataset.a === cadAnio); });
+  cada($('f-meses').children, function (b) { b.classList.toggle('activo', b.dataset.m === cadMes); });
   $('f-meses').classList.toggle('desactivado', !cadAnio);
   $('f-cad-texto').textContent = !cadAnio ? 'sin caducidad' : (cadMes ? cadMes + '/' + cadAnio : cadAnio + ' (falta el mes)');
+}
+
+/* ---------- Guardar ---------- */
+function fichaFormulario() {
+  const contenido = $('p-contenido').value.trim();
+  return {
+    codigo: actual.codigo,
+    nombre: $('p-nombre').value.trim(),
+    marca: $('p-marca').value.trim(),
+    categoria: actual.categoria || '',
+    tipo: actual.tipoProducto,
+    contenido: contenido === '' ? '' : Number(contenido.replace(',', '.')),
+    unidad: contenido === '' ? '' : $('p-unidad').value,
+    linea_objetivo: $('p-linea').value
+  };
+}
+
+async function guardarMovimiento(seguir) {
+  const cantidad = parseInt($('f-cantidad').value, 10);
+  if (!cantidad || cantidad < 1) { toast('La cantidad debe ser 1 o más'); return; }
+  if (cadAnio && !cadMes) { toast('Elige también el mes de caducidad'); return; }
+  const ficha = fichaFormulario();
+  if (actual.sinCodigo && !ficha.nombre) { toast('Un artículo sin código necesita nombre'); $('f-ficha').classList.remove('oculto'); return; }
+  if (ficha.contenido !== '' && !(ficha.contenido > 0)) { toast('El contenido debe ser un número mayor que 0'); return; }
+
+  // ¿Ha cambiado la ficha? Solo se envían los campos con cambios
+  const antes = catalogo[actual.codigo] || {};
+  const cambios = {};
+  ['nombre', 'marca', 'categoria', 'tipo', 'contenido', 'unidad', 'linea_objetivo'].forEach(function (k) {
+    const nuevo = ficha[k], viejo = antes[k] === undefined || antes[k] === null ? '' : antes[k];
+    if (nuevo !== '' && String(nuevo) !== String(viejo)) cambios[k] = nuevo;
+  });
+  if (!actual.existe && !('tipo' in cambios)) cambios.tipo = ficha.tipo;
+  if (Object.keys(cambios).length) {
+    prodPend[actual.codigo] = Object.assign({ codigo: actual.codigo }, prodPend[actual.codigo] || {}, cambios);
+    catalogo[actual.codigo] = Object.assign({ codigo: actual.codigo }, antes, cambios);
+    await idb.poner('kv', prodPend, 'prodPend');
+    await idb.poner('kv', catalogo, 'catalogo');
+  }
+
+  const mov = {
+    id: (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2)),
+    fecha: new Date().toISOString(),
+    usuario: ajustes.usuario || '',
+    tipo: tipoActual,
+    codigo: actual.codigo,
+    cantidad: cantidad,
+    caducidad: cadAnio ? cadAnio + '-' + cadMes : '',
+    almacen: $('f-almacen').value,
+    estante: $('f-estante-caja').classList.contains('oculto') ? '' : $('f-estante').value,
+    nota: $('f-nota').value.trim()
+  };
+  await idb.poner('pendientes', mov);
+  await idb.poner('historial', Object.assign({}, mov, { nombre: nombreDe(mov.codigo), estado: 'pendiente' }));
+
+  if (mov.tipo === 'ENTRADA') ultimaCad[mov.codigo] = mov.caducidad;
+  ajustes.ultimoAlmacen = mov.almacen;
+  if (mov.estante) ajustes.ultimoEstante = mov.estante;
+  await guardarAjustesLocales();
+
+  toast((mov.tipo === 'ENTRADA' ? 'Entrada' : 'Salida') + ' guardada: ' + cantidad + ' × ' + nombreDe(mov.codigo));
+  if (seguir) abrirEscaner(); else mostrar('inicio');
+  await refrescarEstado();
+  await pintarHistorial();
+  sincronizar(false);
 }
 
 /* ---------- Consulta de stock ---------- */
@@ -368,110 +586,87 @@ function estadoCaducidad(cad) {
   return '';
 }
 
+function htmlLote(l, conSitio) {
+  const p = catalogo[l.codigo] || {};
+  const e = p.tipo === 'EQUIPO' ? '' : estadoCaducidad(l.caducidad);
+  return '<span class="' + e + '">' + esc(l.caducidad || 'sin cad.') + (e === 'caducado' ? ' (caducado)' : '') + '</span>' +
+    (conSitio ? ' · ' + esc(l.almacen) + (l.estante ? ' · ' + esc(l.estante) : '') : '') + ' · ' + l.stock + ' uds';
+}
+
 function pintarStock() {
+  ['producto', 'categoria', 'estancia'].forEach(function (v) { $('s-v-' + v).classList.toggle('activo', v === vistaStock); });
   const porCodigo = lotesTodos(pendientesCache);
   const q = $('s-buscar').value.trim().toLowerCase();
-  const filas = Object.keys(porCodigo).map(function (c) {
+
+  // Filas planas: un lote por fila
+  const lotes = [];
+  Object.keys(porCodigo).forEach(function (c) {
     const p = catalogo[c] || {};
-    const lotes = porCodigo[c];
-    return { codigo: c, nombre: p.nombre || '(sin nombre)', marca: p.marca || '', lotes: lotes,
-             total: lotes.reduce(function (s, l) { return s + l.stock; }, 0) };
-  }).filter(function (f) {
-    return !q || (f.nombre + ' ' + f.marca + ' ' + f.codigo).toLowerCase().indexOf(q) >= 0;
-  }).sort(function (a, b) { return a.nombre.localeCompare(b.nombre, 'es'); });
-
-  const caducados = filas.reduce(function (n, f) { return n + f.lotes.filter(function (l) { return estadoCaducidad(l.caducidad) === 'caducado'; }).length; }, 0);
-  $('s-resumen').textContent = filas.length + ' productos' + (caducados ? ' · ⚠️ ' + caducados + ' lotes caducados' : '') +
-    (config.ultimaSync ? ' · datos de ' + new Date(config.ultimaSync).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
-
-  if (!filas.length) { $('s-lista').innerHTML = '<p class="muted">' + (q ? 'Nada coincide con la búsqueda.' : 'No hay stock registrado.') + '</p>'; return; }
-  $('s-lista').innerHTML = filas.map(function (f) {
-    return '<div class="prod" data-c="' + esc(f.codigo) + '"><div class="prod-cab"><span>' + esc(f.nombre) +
-      (f.marca ? ' <span class="muted">· ' + esc(f.marca) + '</span>' : '') + '</span><span class="prod-total">' + f.total + '</span></div>' +
-      f.lotes.map(function (l) {
-        const e = estadoCaducidad(l.caducidad);
-        return '<div class="lote"><span class="' + e + '">' + esc(l.caducidad || 'sin cad.') + (e === 'caducado' ? ' (caducado)' : '') +
-          '</span> · ' + esc(l.almacen) + ' · est. ' + esc(l.estante) + ' · ' + l.stock + ' uds</div>';
-      }).join('') + '</div>';
-  }).join('');
-  Array.prototype.forEach.call($('s-lista').children, function (d) {
-    d.onclick = function () { abrirFormulario(d.dataset.c); };
+    const texto = ((p.nombre || '') + ' ' + (p.marca || '') + ' ' + c).toLowerCase();
+    if (q && texto.indexOf(q) < 0) return;
+    porCodigo[c].forEach(function (l) { lotes.push(Object.assign({ codigo: c }, l)); });
   });
-}
 
-function cambiarTipo(tipo) {
-  tipoActual = tipo;
-  $('f-entrada').classList.toggle('activo', tipo === 'ENTRADA');
-  $('f-salida').classList.toggle('activo', tipo === 'SALIDA');
-  $('f-salida').classList.toggle('salida', tipo === 'SALIDA');
-  const lotes = tipo === 'SALIDA' ? lotesDe(actual.codigo) : [];
-  $('f-lotes-caja').classList.toggle('oculto', !lotes.length);
-  $('f-lotes').innerHTML = lotes.map(function (l, i) {
-    return '<button class="chip" data-i="' + i + '">' + esc(l.caducidad || 'sin cad.') + ' · ' +
-      esc(l.almacen) + ' est. ' + esc(l.estante) + ' · ' + l.stock + ' uds</button>';
-  }).join('');
-  Array.prototype.forEach.call($('f-lotes').children, function (b) {
-    b.onclick = function () { elegirLote(lotes[Number(b.dataset.i)], b); };
-  });
-  if (lotes.length) elegirLote(lotes[0], $('f-lotes').children[0]); // FEFO: el que caduca antes
-}
+  const productos = {};
+  lotes.forEach(function (l) { productos[l.codigo] = true; });
+  const caducados = lotes.filter(function (l) {
+    return (catalogo[l.codigo] || {}).tipo !== 'EQUIPO' && estadoCaducidad(l.caducidad) === 'caducado';
+  }).length;
+  $('s-resumen').textContent = Object.keys(productos).length + ' productos' + (caducados ? ' · ⚠️ ' + caducados + ' lotes caducados' : '') +
+    (ajustes.ultimaSync ? ' · datos de ' + new Date(ajustes.ultimaSync).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
-function elegirLote(l, boton) {
-  Array.prototype.forEach.call($('f-lotes').children, function (b) { b.classList.remove('activo'); });
-  boton.classList.add('activo');
-  const partes = (l.caducidad || '').split('-');
-  ponerCaducidad(partes[0] || '', partes[1] || '');
-  if (l.almacen) $('f-almacen').value = l.almacen;
-  if (l.estante) $('f-estante').value = l.estante;
-}
+  if (!lotes.length) { $('s-lista').innerHTML = '<p class="muted">' + (q ? 'Nada coincide con la búsqueda.' : 'No hay stock registrado.') + '</p>'; return; }
 
-function cambiarCantidad(d) {
-  const n = Math.max(1, (parseInt($('f-cantidad').value, 10) || 1) + d);
-  $('f-cantidad').value = n;
-}
-
-async function guardarMovimiento(seguir) {
-  const cantidad = parseInt($('f-cantidad').value, 10);
-  if (!cantidad || cantidad < 1) { toast('La cantidad debe ser 1 o más'); return; }
-  const anio = cadAnio, mes = cadMes;
-  if (anio && !mes) { toast('Elige también el mes de caducidad'); return; }
-  const caducidad = anio ? anio + '-' + mes : '';
-
-  const mov = {
-    id: (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2)),
-    fecha: new Date().toISOString(),
-    usuario: config.usuario || '',
-    tipo: tipoActual,
-    codigo: actual.codigo,
-    cantidad: cantidad,
-    caducidad: caducidad,
-    almacen: $('f-almacen').value,
-    estante: $('f-estante').value,
-    nota: $('f-nota').value.trim()
-  };
-
-  let producto = null;
-  const nombreNuevo = $('f-nombre-nuevo').value.trim();
-  if (!actual.conocido && nombreNuevo) {
-    producto = { codigo: actual.codigo, nombre: nombreNuevo, marca: $('f-marca-nueva').value.trim() };
-    catalogo[actual.codigo] = Object.assign({}, catalogo[actual.codigo] || {}, producto);
-    await idb.poner('kv', catalogo, 'catalogo');
+  function tarjetaProducto(codigo, susLotes, conSitio) {
+    const p = catalogo[codigo] || {};
+    const total = susLotes.reduce(function (s, l) { return s + l.stock; }, 0);
+    return '<div class="prod" data-c="' + esc(codigo) + '"><div class="prod-cab"><span>' + esc(p.nombre || '(sin nombre)') +
+      (p.marca ? ' <span class="muted">· ' + esc(p.marca) + '</span>' : '') +
+      (p.tipo === 'EQUIPO' ? ' <span class="tag-cat tag-equipo">Equipo</span>' : '') +
+      '</span><span class="prod-total">' + total + '</span></div>' +
+      susLotes.map(function (l) { return '<div class="lote">' + htmlLote(l, conSitio) + '</div>'; }).join('') + '</div>';
+  }
+  function agruparPor(lista, clave) {
+    const g = {};
+    lista.forEach(function (l) { const k = clave(l); (g[k] = g[k] || []).push(l); });
+    return g;
+  }
+  function porProducto(lista, conSitio) {
+    const g = agruparPor(lista, function (l) { return l.codigo; });
+    return Object.keys(g).sort(function (a, b) { return nombreDe(a).localeCompare(nombreDe(b), 'es'); })
+      .map(function (c) { return tarjetaProducto(c, g[c], conSitio); }).join('');
   }
 
-  await idb.poner('pendientes', Object.assign({}, mov, { _producto: producto }));
-  const nombre = (catalogo[actual.codigo] && catalogo[actual.codigo].nombre) || '';
-  await idb.poner('historial', Object.assign({}, mov, { nombre: nombre, estado: 'pendiente' }));
-
-  if (mov.tipo === 'ENTRADA') ultimaCad[mov.codigo] = caducidad;
-  config.ultimoAlmacen = mov.almacen;
-  config.ultimoEstante = mov.estante;
-  await guardarConfig();
-
-  toast((mov.tipo === 'ENTRADA' ? 'Entrada' : 'Salida') + ' guardada: ' + cantidad + ' × ' + (nombre || mov.codigo));
-  if (seguir) abrirEscaner(); else mostrar('inicio');
-  await refrescarEstado();
-  await pintarHistorial();
-  sincronizar(false);
+  let html = '';
+  if (vistaStock === 'producto') {
+    html = porProducto(lotes, true);
+  } else if (vistaStock === 'categoria') {
+    const orden = categorias();
+    const g = agruparPor(lotes, function (l) { return (catalogo[l.codigo] || {}).categoria || 'SIN CATEGORÍA'; });
+    Object.keys(g).sort(function (a, b) {
+      const ia = orden.indexOf(a), ib = orden.indexOf(b);
+      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.localeCompare(b);
+    }).forEach(function (cat) {
+      html += '<div class="grupo">' + esc(bonito(cat)) + '</div>' + porProducto(g[cat], true);
+    });
+  } else {
+    const ordenE = estancias();
+    const g = agruparPor(lotes, function (l) { return l.almacen + '|' + (l.estante || ''); });
+    Object.keys(g).sort(function (a, b) {
+      const pa = a.split('|'), pb = b.split('|');
+      const ia = ordenE.indexOf(pa[0]), ib = ordenE.indexOf(pb[0]);
+      if (ia !== ib) return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+      const ua = ubicacionesDe(pa[0]), ja = ua.indexOf(pa[1]), jb = ua.indexOf(pb[1]);
+      return (ja < 0 ? 999 : ja) - (jb < 0 ? 999 : jb) || pa[1].localeCompare(pb[1]);
+    }).forEach(function (k) {
+      const p = k.split('|');
+      html += '<div class="grupo">' + esc(p[0]) + (p[1] ? ' · ' + esc(p[1]) : '') + '</div>' + porProducto(g[k], false);
+    });
+  }
+  $('s-lista').innerHTML = html;
+  cada($('s-lista').querySelectorAll('.prod'), function (d) {
+    d.onclick = function () { abrirFormulario(d.dataset.c); };
+  });
 }
 
 /* ---------- Sincronización ---------- */
@@ -481,15 +676,15 @@ async function llamar(metodo, datos) {
   try {
     let resp;
     if (metodo === 'GET') {
-      const u = new URL(config.url);
+      const u = new URL(ajustes.url);
       u.searchParams.set('accion', datos.accion);
-      u.searchParams.set('token', config.token);
+      u.searchParams.set('token', ajustes.token);
       resp = await fetch(u.toString(), { signal: ctrl.signal });
     } else {
-      resp = await fetch(config.url, {
+      resp = await fetch(ajustes.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // evita el bloqueo CORS de Apps Script
-        body: JSON.stringify(Object.assign({}, datos, { token: config.token })),
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(Object.assign({}, datos, { token: ajustes.token })),
         signal: ctrl.signal
       });
     }
@@ -505,8 +700,19 @@ async function llamar(metodo, datos) {
   }
 }
 
+function aplicarDatos(d) {
+  const nuevo = {};
+  (d.productos || []).forEach(function (p) { nuevo[String(p.codigo)] = p; });
+  // Las fichas editadas aún sin enviar mandan sobre lo descargado
+  Object.keys(prodPend).forEach(function (c) { nuevo[c] = Object.assign({}, nuevo[c] || {}, prodPend[c]); });
+  catalogo = nuevo;
+  stockServidor = d.stock || [];
+  if (Array.isArray(d.config) && d.config.length) listas = d.config;
+  objetivos = d.objetivos || [];
+}
+
 async function sincronizar(manual) {
-  if (sincronizando || !config.url || !config.token) return;
+  if (sincronizando || !ajustes.url || !ajustes.token) return;
   if (!navigator.onLine) {
     if (manual) toast('Sin conexión. Se sincronizará al volver la red.');
     return;
@@ -516,25 +722,36 @@ async function sincronizar(manual) {
   try {
     const pendientes = await idb.todos('pendientes');
     pendientes.sort(function (a, b) { return a.fecha.localeCompare(b.fecha); });
-    for (let i = 0; i < pendientes.length; i += 100) {
-      const lote = pendientes.slice(i, i + 100);
-      const productos = lote.filter(function (m) { return m._producto; }).map(function (m) { return m._producto; });
-      const movimientos = lote.map(function (m) { const c = Object.assign({}, m); delete c._producto; return c; });
+    const fichas = Object.keys(prodPend).map(function (c) { return prodPend[c]; });
+    // Compatibilidad con movimientos guardados por la v1 (llevaban la ficha dentro)
+    pendientes.forEach(function (m) { if (m._producto && !prodPend[m.codigo]) fichas.push(m._producto); });
+
+    const lotes = [];
+    for (let i = 0; i < pendientes.length; i += 100) lotes.push(pendientes.slice(i, i + 100));
+    if (!lotes.length && fichas.length) lotes.push([]);
+
+    for (let i = 0; i < lotes.length; i++) {
+      const movimientos = lotes[i].map(function (m) { const c = Object.assign({}, m); delete c._producto; return c; });
+      const productos = i === 0 ? fichas : [];
       const r = await llamar('POST', { accion: 'movimientos', movimientos: movimientos, productos: productos });
       for (const id of r.aceptados) { await idb.borrar('pendientes', id); await marcarHistorial(id, 'ok'); }
       for (const x of r.rechazados) { await idb.borrar('pendientes', x.id); await marcarHistorial(x.id, 'rechazado: ' + x.motivo); }
+      if (i === 0 && productos.length) {
+        // Solo se borran las fichas enviadas que no se han vuelto a editar mientras tanto
+        productos.forEach(function (f) { if (prodPend[f.codigo] === f) delete prodPend[f.codigo]; });
+        await idb.poner('kv', prodPend, 'prodPend');
+      }
     }
 
     const d = await llamar('GET', { accion: 'datos' });
-    const nuevo = {};
-    (d.productos || []).forEach(function (p) { nuevo[String(p.codigo)] = p; });
-    catalogo = nuevo;
-    stockServidor = d.stock || [];
+    aplicarDatos(d);
     await idb.poner('kv', catalogo, 'catalogo');
     await idb.poner('kv', stockServidor, 'stock');
+    await idb.poner('kv', listas, 'listas');
+    await idb.poner('kv', objetivos, 'objetivos');
 
-    config.ultimaSync = new Date().toISOString();
-    await guardarConfig();
+    ajustes.ultimaSync = new Date().toISOString();
+    await guardarAjustesLocales();
     ultimoError = '';
     if (manual) toast('Sincronizado');
   } catch (e) {
@@ -545,16 +762,18 @@ async function sincronizar(manual) {
     sincronizando = false;
     await refrescarEstado();
     await pintarHistorial();
+    if (!$('pantalla-ajustes').classList.contains('oculto')) pintarListas();
   }
 }
 
 /* ---------- Ajustes ---------- */
 function abrirAjustes() {
-  $('a-url').value = config.url || '';
-  $('a-token').value = config.token || '';
-  $('a-usuario').value = config.usuario || '';
-  $('a-almacen').value = config.almacen || ALMACENES[0];
+  $('a-url').value = ajustes.url || '';
+  $('a-token').value = ajustes.token || '';
+  $('a-usuario').value = ajustes.usuario || '';
+  opcionesConValor($('a-almacen'), estancias(), ajustes.almacen || estancias()[0]);
   $('a-resultado').textContent = '';
+  pintarListas();
   mostrar('ajustes');
 }
 
@@ -563,25 +782,69 @@ async function guardarAjustes() {
   if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) { toast('La dirección debe empezar por https://script.google.com y terminar en /exec', 4000); return; }
   if (!token) { toast('Falta el token'); return; }
   if (!usuario) { toast('Escribe tu nombre'); return; }
-  config.url = url; config.token = token; config.usuario = usuario; config.almacen = $('a-almacen').value;
-  await guardarConfig();
+  ajustes.url = url; ajustes.token = token; ajustes.usuario = usuario; ajustes.almacen = $('a-almacen').value;
+  await guardarAjustesLocales();
   toast('Ajustes guardados');
   mostrar('inicio');
   sincronizar(true);
 }
 
 async function probarConexion() {
-  const anterior = { url: config.url, token: config.token };
-  config.url = $('a-url').value.trim();
-  config.token = $('a-token').value.trim();
+  const anterior = { url: ajustes.url, token: ajustes.token };
+  ajustes.url = $('a-url').value.trim();
+  ajustes.token = $('a-token').value.trim();
   $('a-resultado').textContent = 'Probando…';
   try {
-    await llamar('GET', { accion: 'ping' });
-    $('a-resultado').textContent = '✅ Conexión correcta. Pulsa Guardar.';
+    const r = await llamar('GET', { accion: 'ping' });
+    $('a-resultado').textContent = '✅ Conexión correcta' + (r.version >= 2 ? '' : ' (servidor antiguo: actualiza Codigo.gs)') + '. Pulsa Guardar.';
   } catch (e) {
     $('a-resultado').textContent = '❌ ' + e.message;
   } finally {
-    config.url = anterior.url; config.token = anterior.token;
+    ajustes.url = anterior.url; ajustes.token = anterior.token;
+  }
+}
+
+/* ---------- Editar listas ---------- */
+function pintarListas() {
+  ['CATEGORIA', 'ESTANCIA', 'UBICACION'].forEach(function (t) { $('l-t-' + t).classList.toggle('activo', t === tipoLista); });
+  const conEstancia = tipoLista === 'UBICACION';
+  $('l-estancia-caja').classList.toggle('oculto', !conEstancia);
+  if (conEstancia) opcionesConValor($('l-estancia'), estancias(), $('l-estancia').value || estancias()[0]);
+  const est = conEstancia ? $('l-estancia').value : '';
+  const items = listas.filter(function (x) { return x.tipo === tipoLista && (!conEstancia || x.estancia === est); });
+  if (!listas.length) { $('l-items').innerHTML = '<p class="muted">Aún no se han descargado las listas. Sincroniza con conexión (y comprueba que el servidor está en la v2).</p>'; return; }
+  $('l-items').innerHTML = items.length ? items.map(function (x, i) {
+    return '<div class="lista-item' + (x.activo ? '' : ' inactivo') + '"><span>' + esc(tipoLista === 'CATEGORIA' ? bonito(x.valor) : x.valor) +
+      '</span><button data-i="' + i + '">' + (x.activo ? 'Desactivar' : 'Activar') + '</button></div>';
+  }).join('') : '<p class="muted">Lista vacía.</p>';
+  cada($('l-items').querySelectorAll('button'), function (b) {
+    b.onclick = function () {
+      const x = items[Number(b.dataset.i)];
+      cambiarLista({ op: x.activo ? 'desactivar' : 'activar', tipo: x.tipo, valor: x.valor, estancia: x.estancia });
+    };
+  });
+}
+
+async function anadirALista() {
+  let valor = $('l-nuevo').value.trim();
+  if (!valor) { toast('Escribe el nuevo valor'); return; }
+  if (tipoLista === 'CATEGORIA') valor = valor.toUpperCase().replace(/\s+/g, '_');
+  const ok = await cambiarLista({ op: 'añadir', tipo: tipoLista, valor: valor, estancia: tipoLista === 'UBICACION' ? $('l-estancia').value : '' });
+  if (ok) $('l-nuevo').value = '';
+}
+
+async function cambiarLista(cambio) {
+  if (!navigator.onLine) { toast('Editar listas necesita conexión'); return false; }
+  try {
+    const r = await llamar('POST', { accion: 'config', cambio: cambio });
+    listas = r.config || listas;
+    await idb.poner('kv', listas, 'listas');
+    pintarListas();
+    toast('Lista actualizada');
+    return true;
+  } catch (e) {
+    toast('No se pudo guardar: ' + e.message, 4000);
+    return false;
   }
 }
 
