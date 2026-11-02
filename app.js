@@ -4,7 +4,7 @@
  * Escanear → guardar sin conexión → sincronizar con la Sheet
  * ========================================================= */
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 const ALMACENES = ['Trastero Ávila', 'Sotalbo'];
 const ESTANTES = ['1', '2', '3', '4', '5', '6'];
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
