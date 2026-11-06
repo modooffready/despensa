@@ -11,6 +11,7 @@ const DATOS = {
   ok: true, version: 2.6, ultimaCopia: new Date().toISOString(), objetivos: [],
   config: [{ tipo: 'CATEGORIA', valor: 'CONDIMENTOS', padre: 'DESPENSA', estancia: 'DESPENSA', activo: true },
            { tipo: 'CATEGORIA', valor: 'SALSAS', padre: 'DESPENSA', estancia: 'DESPENSA', activo: true },
+           { tipo: 'CATEGORIA', valor: 'HIGIENE', padre: 'MATERIAL', estancia: 'MATERIAL', activo: true },
            { tipo: 'ESTANCIA', valor: T, padre: '', estancia: '', activo: true }],
   productos: [{ codigo: '8410000000001', nombre: 'Ketchup', categoria: 'CONDIMENTOS', unidad: 'g', contenido: 560 }],
   stock: [{ codigo: '8410000000001', caducidad: '2030-01', almacen: T, estante: '', stock: 3 }]
@@ -44,8 +45,11 @@ test('editar ficha no registra movimiento; deshacer vale para cualquier movimien
     await p.waitForFunction(function () { return Object.keys(catalogo).length === 1; });
     conexion = false; // así los movimientos quedan pendientes y se pueden contar
 
+    // 0) Con «Material» elegido arriba, un producto de Despensa muestra las categorías de Despensa
+    await p.evaluate(function () { ajustes.modo = 'MATERIAL'; });
     // 1) Editar ficha (como desde «✏️ Editar ficha»): sin entrada/salida y con «Guardar cambios»
     await p.evaluate(function () { return abrirFormulario('8410000000001', { editar: true }); });
+    assert.ok(await p.isVisible('#p-categorias >> text=Salsas'), 'Salsas visible aunque el modo de arriba sea Material');
     assert.ok(await p.isHidden('#f-mov'), 'oculta entrada/salida');
     assert.ok(await p.isHidden('#f-guardar-seguir')); assert.ok(await p.isHidden('#f-guardar'));
     assert.ok(await p.isVisible('#f-guardar-cambios'));

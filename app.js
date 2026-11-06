@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.8.3';
+const VERSION = '2.8.4';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -686,7 +686,7 @@ function raices(t) {
 function coincidencias(a, b) { let n = 0; a.forEach(function (x) { if (b.has(x)) n++; }); return n; }
 
 function sugerirCategorias() {
-  const activas = categoriasDelModo(modoActual());
+  const activas = categorias(); // todas: un producto de comida se reconoce aunque arriba esté «Material»
   if (!activas.length) return [];
   const nombre = $('p-nombre').value + ' ' + $('p-marca').value;
   const texto = ' ' + normalizar(nombre) + ' ';
@@ -841,7 +841,9 @@ function pintarCabeceraProducto() {
 }
 
 function pintarCategoriasFicha() {
-  const todas = categoriasDelModo(modoActual());
+  // Se usan las categorías del modo del propio producto (si ya tiene categoría), no las del modo elegido arriba
+  const modoProd = (actual.categoria && modoDe(actual.categoria)) || modoActual();
+  const todas = actual.verTodasCats ? categorias().slice() : categoriasDelModo(modoProd);
   if (actual.categoria && todas.indexOf(actual.categoria) < 0) todas.push(actual.categoria);
   if (!todas.length) { $('p-categorias').innerHTML = '<span class="muted">Sincroniza para descargar las categorías.</span>'; return; }
   const sug = sugerirCategorias().slice(0, 3);
@@ -863,7 +865,8 @@ function pintarCategoriasFicha() {
       html += todas.filter(function (c) { return sugCats.indexOf(c) < 0; }).map(chip).join('');
     }
   } else {
-    html = todas.map(chip).join('');
+    html = todas.map(chip).join('') +
+      '<button class="enlace" id="p-ver-cats" style="width:100%;text-align:left">' + (actual.verTodasCats ? 'Ver solo las de ' + (modoProd === 'MATERIAL' ? 'Material' : 'Despensa') : 'Ver también las de ' + (modoProd === 'MATERIAL' ? 'Despensa' : 'Material')) + '</button>';
   }
   $('p-categorias').innerHTML = html;
   const ver = $('p-ver-cats');
