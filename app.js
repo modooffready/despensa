@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.8.1';
+const VERSION = '2.8.2';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -641,7 +641,8 @@ const REGLAS = {
   PLATOS_PREPARADOS: ['fabada', 'cocido', 'callos', 'oreja', 'lentejas con', 'lentejas estofadas', 'plato', 'preparad', 'guiso', 'estofad', 'albondiga', 'potaje', 'paella', 'cocinad'],
   CONSERVAS: ['atun', 'sardina', 'caballa', 'mejillon', 'berberecho', 'bonito', 'maiz', 'guisante', 'pimiento', 'champinon', 'esparrago', 'menestra', 'garbanzos cocidos', 'alubias cocidas', 'lentejas cocidas', 'legumbre', 'almibar', 'melocoton', 'compota', 'aceituna', 'conserva'],
   COCINAR: ['arroz', 'pasta', 'macarron', 'espagueti', 'spaghetti', 'fideo', 'harina', 'tallarin', 'helices', 'cuscus', 'pure de patata'],
-  CONDIMENTOS: ['aceite', 'sal ', 'azucar', 'tomate', 'caldo', 'vinagre', 'especia', 'pimenton', 'oregano', 'mayonesa', 'ketchup', 'mostaza', 'pastilla de caldo'],
+  CONDIMENTOS: ['aceite', 'sal ', 'azucar', 'tomate', 'caldo', 'vinagre', 'especia', 'pimenton', 'oregano', 'pastilla de caldo'],
+  SALSAS: ['salsa', 'mayonesa', 'ketchup', 'mostaza', 'alioli', 'barbacoa', 'tabasco', 'sriracha', 'kikkoman', 'teriyaki', 'pesto', 'guacamole'],
   DESAYUNO: ['cacao', 'cola cao', 'colacao', 'nesquik', 'cafe', 'infusion', 'manzanilla', 'magdalena', 'galleta', 'cereal', 'avena', 'miel', 'mermelada', 'crema de cacahuete', 'tostada', 'bizcocho', 'nocilla', 'nutella'],
   SNACKS: ['patatas fritas', 'gusanito', 'frutos secos', 'almendra', 'nuez', 'cacahuete', 'pistacho', 'chocolate', 'barrita', 'chips', 'palomita', 'snack'],
   MENAJE_Y_GAS: ['cartucho', 'campingaz', 'gas', 'abrelatas', 'mechero', 'cerilla', 'desechable', 'vaso', 'cubierto', 'servilleta', 'hornillo'],
@@ -656,7 +657,8 @@ const REGLAS_OFF = {
   PLATOS_PREPARADOS: ['meals', 'prepared-', 'stews', 'canned-meals'],
   CONSERVAS: ['canned-', 'fish-in-', 'canned-fish', 'canned-vegetables', 'canned-legumes', 'fruits-in-syrup', 'olives'],
   COCINAR: ['rices', 'pastas', 'flours', 'dry-pastas'],
-  CONDIMENTOS: ['oils', 'salts', 'sugars', 'tomato-sauces', 'broths', 'condiments', 'sauces', 'vinegars', 'spices'],
+  CONDIMENTOS: ['oils', 'salts', 'sugars', 'tomato-sauces', 'broths', 'vinegars', 'spices'],
+  SALSAS: ['mayonnaises', 'ketchup', 'mustards', 'soy-sauces', 'hot-sauces', 'barbecue-sauces', 'pestos'],
   DESAYUNO: ['breakfasts', 'cereals', 'biscuits', 'cocoa', 'coffees', 'teas', 'honeys', 'jams', 'spreads', 'cakes'],
   SNACKS: ['snacks', 'nuts', 'chocolates', 'chips', 'crisps']
 };
@@ -1261,9 +1263,9 @@ function pintarStock() {
 
 /* ---------- Ficha de producto (estilo biblioteca) ---------- */
 const COLOR_CAT = { BEBIDA: '#2f7fa8', POTABILIZAR: '#3a8fb7', PLATOS_PREPARADOS: '#b5562b', CONSERVAS: '#5d6b3a', COCINAR: '#a07b2c',
-  CONDIMENTOS: '#8a5a2b', DESAYUNO: '#c0843a', SNACKS: '#7a2e3a', MENAJE_Y_GAS: '#4a5a6a', ENERGIA: '#c89b1e', HIGIENE: '#3d7a74',
+  CONDIMENTOS: '#8a5a2b', SALSAS: '#b8452e', DESAYUNO: '#c0843a', SNACKS: '#7a2e3a', MENAJE_Y_GAS: '#4a5a6a', ENERGIA: '#c89b1e', HIGIENE: '#3d7a74',
   LIMPIEZA: '#4f6f9a', BOTIQUIN: '#a8323a' };
-const ICONO_CAT = { BEBIDA: '💧', POTABILIZAR: '🫙', PLATOS_PREPARADOS: '🍲', CONSERVAS: '🥫', COCINAR: '🍚', CONDIMENTOS: '🧂',
+const ICONO_CAT = { BEBIDA: '💧', POTABILIZAR: '🫙', PLATOS_PREPARADOS: '🍲', CONSERVAS: '🥫', COCINAR: '🍚', CONDIMENTOS: '🧂', SALSAS: '🌶️',
   DESAYUNO: '☕', SNACKS: '🍫', MENAJE_Y_GAS: '🔥', ENERGIA: '🔋', HIGIENE: '🧼', LIMPIEZA: '🧽', BOTIQUIN: '🩹' };
 let fichaActual = { codigo: '', lista: [] };
 
@@ -1523,7 +1525,11 @@ function calcularObjetivos(porCodigo, almacen) {
       if (cand.length === 1) { linea = cand[0]; automatica = true; }
     }
     const envases = lotes.reduce(function (s, l) { return s + l.stock; }, 0);
-    if (!linea) { sinLinea.push({ codigo: c, envases: envases }); return; }
+    if (!linea) {
+      // Solo avisa si su categoría tiene líneas (varias) en esta estancia; si no tiene objetivos, se ignora
+      if ((porCat[p.categoria] || []).length > 1 || !p.categoria) sinLinea.push({ codigo: c, envases: envases });
+      return;
+    }
 
     const equipo = p.tipo === 'EQUIPO';
     let validos = 0, pronto = 0, caducado = 0;

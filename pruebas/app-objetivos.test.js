@@ -33,12 +33,13 @@ const DATOS = {
     { codigo: 'R2', nombre: 'Arroz suelto', categoria: 'COCINAR', linea_objetivo: 'TA-11', unidad: 'uds' },
     { codigo: 'N', nombre: 'Nueces', categoria: 'SNACKS', linea_objetivo: 'TA-23', unidad: 'g', contenido: 500 },
     { codigo: 'P', nombre: 'Papel', categoria: 'HIGIENE', linea_objetivo: 'TA-31', unidad: 'rollos', contenido: 12 },
+    { codigo: 'K', nombre: 'Ketchup', categoria: 'SALSAS', unidad: 'g', contenido: 560 },
     { codigo: 'AB', nombre: 'Abrelatas', categoria: 'MENAJE_Y_GAS', linea_objetivo: 'TA-26', tipo: 'EQUIPO', unidad: 'uds' }
   ],
   stock: [
     ['G', mes(40), T, 5], ['G', mes(40), M, 3], ['L', mes(12), T, 6], ['L', '2020-01', T, 2], ['F', mes(1), T, 4],
     ['A', mes(30), T, 12], ['S', mes(30), T, 3], ['R', mes(20), T, 2], ['R2', mes(20), T, 1], ['N', mes(8), T, 2],
-    ['P', '', T, 1], ['AB', '', T, 2], ['AB', '', M, 1]
+    ['P', '', T, 1], ['K', mes(10), T, 2], ['AB', '', T, 2], ['AB', '', M, 1]
   ].map(function (r) { return { codigo: r[0], caducidad: r[1], almacen: r[2], estante: '', stock: r[3] }; })
 };
 
@@ -78,7 +79,7 @@ test('pantalla Objetivos: avance por línea y lista de la compra', async functio
     assert.strictEqual(L['TA-06'].tiene, 4, 'fabada sin línea cuenta por categoría (una sola línea)');
     assert.strictEqual(L['TA-06'].pronto, 4);
     assert.strictEqual(L['TA-08'].tiene, 12, 'sardinas sin línea no cuentan (categoría con varias líneas)');
-    assert.deepStrictEqual(r.sinLinea, ['S']);
+    assert.deepStrictEqual(r.sinLinea, ['S'], 'el ketchup (categoría sin objetivos) no avisa');
     assert.strictEqual(L['TA-11'].tiene, 2); assert.strictEqual(L['TA-11'].sinContenido, 1);
     assert.strictEqual(L['TA-23'].tiene, 1); assert.ok(Math.abs(L['TA-23'].falta - 0.5) < 1e-9, '1,5 kg con coma');
     assert.strictEqual(L['TA-31'].tiene, 12, 'pack de 12 rollos');
