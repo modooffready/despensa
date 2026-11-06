@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.4.5';
+const VERSION = '2.4.6';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -95,6 +95,13 @@ function mostrar(nombre) {
     $('pantalla-' + p).classList.toggle('oculto', p !== nombre);
   });
   if (nombre !== 'escaner') pararEscaner();
+  // Pestañas Registrar / Stock: visibles en esas dos pantallas, con el color de la activa
+  const conPestanas = nombre === 'inicio' || nombre === 'stock';
+  $('pestanas').classList.toggle('oculto', !conPestanas);
+  $('pestanas').classList.toggle('stock', nombre === 'stock');
+  $('cab').style.background = nombre === 'stock' ? '#8a5a2b' : '';
+  $('t-inicio').classList.toggle('activo', nombre === 'inicio');
+  $('t-stock').classList.toggle('activo', nombre === 'stock');
   if ($('ficha-sheet')) $('ficha-sheet').classList.remove('on');
   window.scrollTo(0, 0);
 }
@@ -206,7 +213,8 @@ function enlazarEventos() {
   $('l-modo').onchange = pintarListas;
   $('btn-sincronizar').onclick = function () { sincronizar(true); };
   $('btn-escanear').onclick = abrirEscaner;
-  $('btn-stock').onclick = abrirStock;
+  $('t-inicio').onclick = function () { mostrar('inicio'); };
+  $('t-stock').onclick = abrirStock;
   $('btn-buscar').onclick = function () { soloIncompletos = false; abrirBuscar(); };
   $('btn-incompletos').onclick = function () { soloIncompletos = true; abrirBuscar(); };
   $('b-solo-incompletos').onclick = function () { soloIncompletos = !soloIncompletos; pintarBuscar(); };
@@ -251,7 +259,6 @@ function enlazarEventos() {
   $('f-cancelar').onclick = function () { mostrar('inicio'); };
 
   $('s-buscar').oninput = pintarStock;
-  $('s-volver').onclick = function () { mostrar('inicio'); };
   ['producto', 'categoria', 'estancia'].forEach(function (v) {
     $('s-v-' + v).onclick = function () { vistaStock = v; pintarStock(); };
   });
