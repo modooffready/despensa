@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.6.1';
+const VERSION = '2.7.0';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -57,6 +57,7 @@ let listas = [];         // [{tipo, valor, estancia, activo}] (pestaña Config)
 let objetivos = [];      // [{id, categoria, descripcion, almacen, …}]
 let prodPend = {};       // cambios de fichas de producto aún no enviados
 let fotosPend = {};      // codigo -> foto (dataURL) aún no subida
+let revision = [];       // movimientos rechazados por el servidor: [{mov, motivo, fecha}]
 let miniaturas = {};     // codigo -> foto pequeña guardada en el móvil (para verla siempre)
 let sincronizando = false;
 let ultimoError = '';
@@ -98,6 +99,7 @@ function toast(msg, ms) {
 let pantallaActual = 'inicio', origenFormulario = 'inicio', trampa = false;
 function ponerTrampa() { if (!trampa) { try { history.pushState({ despensa: 1 }, ''); trampa = true; } catch (e) { /* sin historial */ } } }
 function volverA(origen) {
+  if (origen === 'revision') { mostrar('revision'); pintarRevision(); return; }
   if (origen === 'stock') abrirStock();
   else if (origen === 'buscar') { mostrar('buscar'); pintarBuscar(); }
   else mostrar('inicio');
@@ -119,7 +121,7 @@ window.addEventListener('popstate', function () { trampa = false; atras(); });
 function mostrar(nombre) {
   pantallaActual = nombre;
   if (nombre !== 'inicio') ponerTrampa();
-  ['inicio', 'escaner', 'formulario', 'ajustes', 'stock', 'buscar', 'informe'].forEach(function (p) {
+  ['inicio', 'escaner', 'formulario', 'ajustes', 'stock', 'buscar', 'informe', 'revision'].forEach(function (p) {
     $('pantalla-' + p).classList.toggle('oculto', p !== nombre);
   });
   if (nombre !== 'escaner') pararEscaner();
@@ -176,6 +178,7 @@ async function iniciar() {
   objetivos = (await idb.get('kv', 'objetivos')) || [];
   prodPend = (await idb.get('kv', 'prodPend')) || {};
   fotosPend = (await idb.get('kv', 'fotosPend')) || {};
+  revision = (await idb.get('kv', 'revision')) || [];
   miniaturas = (await idb.get('kv', 'miniaturas')) || {};
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
@@ -254,6 +257,8 @@ function enlazarEventos() {
   $('t-stock').onclick = function () { soloCaducan = false; stockGrupo = grupoActual(); stockModo = modoActual(); abrirStock(); };
   $('btn-buscar').onclick = function () { soloIncompletos = false; abrirBuscar(); };
   $('btn-incompletos').onclick = function () { soloIncompletos = true; abrirBuscar(); };
+  $('btn-revision').onclick = abrirRevision;
+  $('r-volver').onclick = function () { mostrar('inicio'); };
   $('btn-caducidades').onclick = function () { soloCaducan = true; stockGrupo = ''; stockModo = 'TODO'; abrirStock(); };
   $('s-caducan').onclick = function () { soloCaducan = !soloCaducan; pintarStock(); };
   $('s-informe').onclick = abrirInforme;
@@ -372,6 +377,8 @@ async function refrescarEstado() {
   });
   $('btn-caducidades').classList.toggle('oculto', !(cad + pronto));
   $('btn-caducidades').textContent = '⏰ ' + [cad ? cad + (cad === 1 ? ' lote caducado' : ' lotes caducados') : '', pronto ? pronto + ' caduca' + (pronto === 1 ? '' : 'n') + ' en 3 meses' : ''].filter(String).join(' · ') + ' · Ver';
+  $('btn-revision').classList.toggle('oculto', !revision.length);
+  $('btn-revision').textContent = '⚠️ ' + revision.length + (revision.length === 1 ? ' movimiento rechazado' : ' movimientos rechazados') + ' · Revisar';
   const n = incompletos().length;
   $('btn-incompletos').classList.toggle('oculto', !n);
   $('btn-incompletos').textContent = '⚠️ ' + n + (n === 1 ? ' producto' : ' productos') + ' sin nombre o sin categoría · Completar';
@@ -588,9 +595,20 @@ async function abrirFormulario(codigo, opciones_) {
   $('f-stock').textContent = actual.existe ? 'En stock (según el último dato): ' + total : '';
 
   cambiarTipo(op.salida ? 'SALIDA' : 'ENTRADA');
+  actual.corregir = op.corregir || null;
+  if (op.corregir) {
+    const m = op.corregir.mov;
+    $('f-cantidad').value = m.cantidad;
+    $('f-nota').value = m.nota || '';
+    const pc = (m.caducidad || '').split('-');
+    ponerCaducidad(pc[0] || '', pc[1] || '');
+    if (m.almacen) opcionesConValor($('f-almacen'), estanciasDelGrupo(grupoActual()), m.almacen);
+    pintarUbicaciones(m.estante || '');
+    origenFormulario = 'revision';
+  }
   mostrar('formulario');
   pintarFoto();
-  $('f-off').textContent = '';
+  $('f-off').textContent = op.corregir ? '⚠️ Corrigiendo un movimiento rechazado: ' + op.corregir.motivo : '';
   if (actual.sinCodigo && !p.nombre) { pintarCategoriasFicha(); setTimeout(function () { $('p-nombre').focus(); }, 100); }
   if (!actual.sinCodigo && !p.nombre) consultarOFF(codigo);
 }
@@ -1014,7 +1032,7 @@ function fichaFormulario() {
 async function guardarFicha() {
   const ficha = fichaFormulario();
   if (actual.sinCodigo && !ficha.nombre) { toast('Un artículo sin código necesita nombre'); $('f-ficha').classList.remove('oculto'); return false; }
-  if (ficha.contenido !== '' && !(ficha.contenido > 0)) { toast('El contenido debe ser un número mayor que 0'); return false; }
+  if (ficha.contenido !== '' && !(isFinite(ficha.contenido) && ficha.contenido > 0 && ficha.contenido < 100000)) { toast('El contenido debe ser un número entre 0 y 100000 (p. ej. 0,5)'); return false; }
   const antes = catalogo[actual.codigo] || {};
   const cambios = {};
   ['nombre', 'marca', 'categoria', 'tipo', 'contenido', 'unidad', 'linea_objetivo', 'foto_url'].forEach(function (k) {
@@ -1040,7 +1058,10 @@ async function guardarSoloFicha() {
 }
 
 async function guardarMovimiento(seguir) {
-  const cantidad = parseInt($('f-cantidad').value, 10);
+  const txtCant = String($('f-cantidad').value).trim();
+  if (!/^\d+$/.test(txtCant)) { toast('La cantidad debe ser un número entero de unidades (sin decimales)'); return; }
+  const cantidad = parseInt(txtCant, 10);
+  if (cantidad > 9999) { toast('La cantidad máxima por movimiento es 9999'); return; }
   if (!cantidad || cantidad < 1) { toast('La cantidad debe ser 1 o más'); return; }
   if (cadAnio && !cadMes) { toast('Elige también el mes de caducidad'); return; }
   const almacen = $('f-almacen').value;
@@ -1072,6 +1093,14 @@ async function guardarMovimiento(seguir) {
   };
   await idb.poner('pendientes', mov);
   await idb.poner('historial', Object.assign({}, mov, { nombre: nombreDe(mov.codigo), estado: 'pendiente' }));
+  if (actual.corregir) {
+    // El rechazado queda sustituido por este movimiento corregido
+    const viejo = actual.corregir.mov.id;
+    revision = revision.filter(function (x) { return x.mov.id !== viejo; });
+    await idb.poner('kv', revision, 'revision');
+    await marcarHistorial(viejo, 'corregido');
+    actual.corregir = null;
+  }
 
   if (mov.tipo === 'ENTRADA') ultimaCad[mov.codigo] = mov.caducidad;
   ajustes.ultimoAlmacen = mov.almacen;
@@ -1335,6 +1364,46 @@ async function pintarHistorialFicha(c) {
   } catch (e) { /* servidor antiguo: se queda el historial local */ }
 }
 
+/* ---------- Bandeja de revisión: movimientos rechazados por el servidor ---------- */
+function abrirRevision() { mostrar('revision'); pintarRevision(); }
+function pintarRevision() {
+  if (!revision.length) { $('r-lista').innerHTML = '<p class="muted">✅ No queda nada por revisar.</p>'; return; }
+  $('r-lista').innerHTML = revision.map(function (x, i) {
+    const m = x.mov;
+    return '<div class="tarjeta"><div><span class="tag ' + esc(m.tipo) + '">' + esc(m.tipo) + '</span> <b>' + esc(m.cantidad) + ' × ' + esc(nombreDe(m.codigo)) + '</b></div>' +
+      '<div class="muted">' + esc(m.caducidad || 'sin cad.') + ' · ' + esc(m.almacen) + (m.estante ? ' · ' + esc(m.estante) : '') + ' · ' +
+      new Date(m.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + (m.usuario ? ' · ' + esc(m.usuario) : '') + '</div>' +
+      '<div class="error" style="margin:6px 0">Motivo: ' + esc(x.motivo) + '</div>' +
+      '<div class="fila"><button class="btn btn-sec" data-a="corregir" data-i="' + i + '">✏️ Corregir</button>' +
+      '<button class="btn btn-sec" data-a="reintentar" data-i="' + i + '">🔄 Reintentar</button>' +
+      '<button class="btn btn-peligro" data-a="descartar" data-i="' + i + '">🗑️ Descartar</button></div></div>';
+  }).join('') + '<p class="muted" style="font-size:13px">«Reintentar» sirve si ya has corregido la causa (p. ej. registrando antes la entrada que faltaba).</p>';
+  cada($('r-lista').querySelectorAll('button[data-a]'), function (b) {
+    b.onclick = function () { accionRevision(b.dataset.a, Number(b.dataset.i)); };
+  });
+}
+async function accionRevision(accion, i) {
+  const x = revision[i];
+  if (!x) return;
+  if (accion === 'descartar') {
+    revision.splice(i, 1);
+    await idb.poner('kv', revision, 'revision');
+    await marcarHistorial(x.mov.id, 'descartado: ' + x.motivo);
+    toast('Movimiento descartado');
+  } else if (accion === 'reintentar') {
+    revision.splice(i, 1);
+    await idb.poner('kv', revision, 'revision');
+    await idb.poner('pendientes', x.mov);
+    await marcarHistorial(x.mov.id, 'pendiente');
+    toast('Se volverá a enviar');
+    sincronizar(false);
+  } else if (accion === 'corregir') {
+    await abrirFormulario(x.mov.codigo, { salida: x.mov.tipo === 'SALIDA', corregir: x });
+    return;
+  }
+  await refrescarEstado(); await pintarHistorial(); pintarRevision();
+}
+
 /* ---------- Informe imprimible (revisión mensual / PDF) ---------- */
 const informe = { alcance: 'sitio', agrupar: 'estancia', lotes: 'todos' };
 async function abrirInforme() {
@@ -1442,10 +1511,22 @@ function pintarBuscar() {
 }
 
 /* ---------- Sincronización ---------- */
+// Todas las llamadas van por POST con la clave dentro del mensaje (nunca en la dirección).
+// Si el servidor aún es antiguo (< 2.5) y no entiende una lectura por POST, se reintenta por GET.
+const LECTURAS = ['ping', 'datos', 'catalogo', 'historial', 'miniatura'];
 async function llamar(metodo, datos) {
+  try {
+    return await peticion('POST', datos);
+  } catch (e) {
+    if (e.message === 'accion desconocida' && LECTURAS.indexOf(datos.accion) >= 0) return await peticion('GET', datos);
+    throw e;
+  }
+}
+
+async function peticion(metodo, datos) {
   const ctrl = new AbortController();
   // El servidor puede tardar al consultar Open Food Facts o guardar fotos
-  const t = setTimeout(function () { ctrl.abort(); }, metodo === 'POST' ? 60000 : 30000);
+  const t = setTimeout(function () { ctrl.abort(); }, datos.accion === 'movimientos' || datos.accion === 'foto' ? 60000 : 30000);
   try {
     let resp;
     if (metodo === 'GET') {
@@ -1464,7 +1545,7 @@ async function llamar(metodo, datos) {
     }
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const json = await resp.json();
-    if (!json.ok) throw new Error(json.error === 'token' ? 'token incorrecto' : (json.error || 'error del servidor'));
+    if (!json.ok) throw new Error(json.error === 'token' ? 'clave no válida o anulada' : (json.error || 'error del servidor'));
     return json;
   } catch (e) {
     if (e.name === 'AbortError') throw new Error('el servidor no responde');
@@ -1510,7 +1591,14 @@ async function sincronizar(manual) {
       const productos = i === 0 ? fichas : [];
       const r = await llamar('POST', { accion: 'movimientos', movimientos: movimientos, productos: productos });
       for (const id of r.aceptados) { await idb.borrar('pendientes', id); await marcarHistorial(id, 'ok'); }
-      for (const x of r.rechazados) { await idb.borrar('pendientes', x.id); await marcarHistorial(x.id, 'rechazado: ' + x.motivo); }
+      for (const x of r.rechazados) {
+        // No se pierde: va a la bandeja de revisión con el motivo y los datos originales
+        const original = lotes[i].find(function (m) { return m.id === x.id; });
+        if (original) { revision.push({ mov: Object.assign({}, original), motivo: x.motivo, fecha: new Date().toISOString() }); }
+        await idb.borrar('pendientes', x.id);
+        await marcarHistorial(x.id, 'rechazado: ' + x.motivo);
+      }
+      if (r.rechazados.length) await idb.poner('kv', revision, 'revision');
       if (i === 0 && productos.length) {
         // Solo se borran las fichas enviadas que no se han vuelto a editar mientras tanto
         productos.forEach(function (f) { if (prodPend[f.codigo] === f) delete prodPend[f.codigo]; });
@@ -1581,7 +1669,9 @@ async function probarConexion() {
   $('a-resultado').textContent = 'Probando…';
   try {
     const r = await llamar('GET', { accion: 'ping' });
-    $('a-resultado').textContent = '✅ Conexión correcta' + (r.version >= 2.4 ? '' : ' (servidor antiguo: actualiza Codigo.gs a la v2.4)') + '. Pulsa Guardar.';
+    $('a-resultado').textContent = '✅ Conexión correcta' + (r.clave ? ' · clave de ' + r.clave : '') +
+      (r.version >= 2.5 ? '' : ' (servidor antiguo: actualiza Codigo.gs a la v2.5)') +
+      (r.clave === 'clave antigua' ? '. Cambia a tu clave personal cuando la tengas.' : '') + '. Pulsa Guardar.';
   } catch (e) {
     $('a-resultado').textContent = '❌ ' + e.message;
   } finally {
