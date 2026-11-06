@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.4.1';
+const VERSION = '2.4.2';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -213,6 +213,8 @@ function enlazarEventos() {
   $('p-nombre').onchange = function () { pintarCategoriasFicha(); if (!actual.lineaTocada) pintarLineas(''); };
   $('p-foto').onclick = function () { $('p-foto-input').click(); };
   $('p-foto-input').onchange = tomarFoto;
+  $('p-galeria').onclick = function () { $('p-galeria-input').click(); };
+  $('p-galeria-input').onchange = tomarFoto;
   $('p-consumible').onclick = function () { ponerTipoProducto('CONSUMIBLE'); };
   $('p-equipo').onclick = function () { ponerTipoProducto('EQUIPO'); };
   $('f-entrada').onclick = function () { cambiarTipo('ENTRADA'); };
@@ -585,7 +587,7 @@ function pintarFoto() {
     (p.foto_url && /openfoodfacts/.test(p.foto_url) ? p.foto_url : '');
   img.classList.toggle('oculto', !src);
   if (src) img.src = src;
-  $('p-foto').textContent = (fotosPend[actual.codigo] || (p.foto_url && !/openfoodfacts/.test(p.foto_url))) ? '📷 Repetir foto' : '📷 Hacer foto del producto';
+  $('p-foto').textContent = (fotosPend[actual.codigo] || (p.foto_url && !/openfoodfacts/.test(p.foto_url))) ? '📷 Repetir foto' : '📷 Hacer foto';
 }
 
 async function tomarFoto(ev) {

@@ -160,7 +160,11 @@
         <select id="p-linea"></select>
         <label>Foto (para productos que no salen en Open Food Facts)</label>
         <input id="p-foto-input" type="file" accept="image/*" capture="environment" class="oculto">
-        <button class="btn btn-sec" id="p-foto">📷 Hacer foto del producto</button>
+        <input id="p-galeria-input" type="file" accept="image/*" class="oculto">
+        <div class="fila">
+          <button class="btn btn-sec" id="p-foto">📷 Hacer foto</button>
+          <button class="btn btn-sec" id="p-galeria">🖼️ Subir de la galería</button>
+        </div>
         <button class="btn btn-sec" id="p-guardar-ficha">💾 Guardar solo la ficha</button>
       </div>
     </div>
@@ -279,6 +283,6 @@
 </main>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.4.1"></script>
+<script src="app.js?v=2.4.2"></script>
 </body>
 </html>
