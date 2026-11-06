@@ -5,12 +5,14 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.8.4';
+const VERSION = '2.8.5';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
 // Solo se usan si la app aún no ha descargado la pestaña Config
 const ESTANCIA_RESERVA = 'Trastero Ávila';
+// Valor guardado cuando el usuario quita la línea de objetivo (el servidor no guarda campos vacíos)
+const SIN_LINEA = 'NINGUNA';
 
 /* ---------- Base de datos local (IndexedDB) ---------- */
 let dbPromesa;
@@ -601,7 +603,7 @@ async function abrirFormulario(codigo, opciones_) {
   $('f-almacen').value = preferida;
   $('f-almacen-caja').classList.toggle('oculto', delGrupo.length < 2);
   pintarUbicaciones(sitio.almacen === preferida && sitio.estante ? sitio.estante : (ajustes.ultimoEstante || ''));
-  pintarLineas(p.linea_objetivo || '');
+  pintarLineas(p.linea_objetivo === SIN_LINEA ? '' : (p.linea_objetivo || ''));
 
   const total = lotesDe(codigo).reduce(function (s, l) { return s + l.stock; }, 0);
   $('f-stock').textContent = actual.existe ? 'En stock (según el último dato): ' + total : '';
@@ -689,8 +691,8 @@ function sugerirCategorias() {
   const activas = categorias(); // todas: un producto de comida se reconoce aunque arriba esté «Material»
   if (!activas.length) return [];
   const nombre = $('p-nombre').value + ' ' + $('p-marca').value;
-  const texto = ' ' + normalizar(nombre) + ' ';
-  const mias = raices(nombre);
+  const texto = ' ' + sinNegados(nombre) + ' ';
+  const mias = raices(sinNegados(nombre));
   const puntos = {};
   activas.forEach(function (c) { puntos[c] = 0; });
   Object.keys(REGLAS).forEach(function (c) {
@@ -718,8 +720,12 @@ function sugerirCategorias() {
     .sort(function (a, b) { return b.puntos - a.puntos; });
 }
 
+// Quita lo que va tras «menos», «sin», «bajo en», «X % de»…: «salsa con menos sal» no es sal
+function sinNegados(t) {
+  return normalizar(t).replace(/\b(menos|sin|bajo en|baja en|bajos en|bajas en|reducido en|reducida en|\d+ de)( de)? \w+/g, ' ');
+}
 function puntuarLinea(o) {
-  const mias = raices($('p-nombre').value + ' ' + $('p-marca').value);
+  const mias = raices(sinNegados($('p-nombre').value + ' ' + $('p-marca').value));
   return coincidencias(mias, raices(o.descripcion));
 }
 
@@ -877,7 +883,9 @@ function pintarCategoriasFicha() {
       actual.catSugerida = false;
       pintarCategoriasFicha();
       pintarCabeceraProducto();
-      if (!actual.lineaTocada) pintarLineas(''); else pintarLineas();
+      const linea = objetivos.find(function (o) { return o.id === $('p-linea').value; });
+      if (linea && linea.categoria !== actual.categoria) { actual.lineaTocada = false; pintarLineas(''); toast('Se ha quitado la línea «' + linea.descripcion + '»: es de otra categoría'); }
+      else if (!actual.lineaTocada) pintarLineas(''); else pintarLineas();
     };
   });
   pintarCabeceraProducto();
@@ -1074,6 +1082,8 @@ async function guardarFicha() {
     if (nuevo !== '' && String(nuevo) !== String(viejo)) cambios[k] = nuevo;
   });
   if (!actual.existe && !('tipo' in cambios)) cambios.tipo = ficha.tipo;
+  // Quitar la línea: se guarda NINGUNA, porque un valor vacío no borraría la anterior
+  if (!ficha.linea_objetivo && antes.linea_objetivo && antes.linea_objetivo !== SIN_LINEA) cambios.linea_objetivo = SIN_LINEA;
   if (Object.keys(cambios).length) {
     prodPend[actual.codigo] = Object.assign({ codigo: actual.codigo }, prodPend[actual.codigo] || {}, cambios);
     catalogo[actual.codigo] = Object.assign({ codigo: actual.codigo }, antes, cambios);

@@ -8,12 +8,15 @@ const { chromium } = require('playwright');
 const RAIZ = path.join(__dirname, '..');
 const T = 'Trastero Ávila';
 const DATOS = {
-  ok: true, version: 2.6, ultimaCopia: new Date().toISOString(), objetivos: [],
+  ok: true, version: 2.6, ultimaCopia: new Date().toISOString(),
+  objetivos: [{ id: 'TA-15', categoria: 'CONDIMENTOS', descripcion: 'Sal', cantidad_objetivo: 1, unidad: 'kg', almacen: T },
+              { id: 'TA-16', categoria: 'CONDIMENTOS', descripcion: 'Azúcar', cantidad_objetivo: 1, unidad: 'kg', almacen: T }],
   config: [{ tipo: 'CATEGORIA', valor: 'CONDIMENTOS', padre: 'DESPENSA', estancia: 'DESPENSA', activo: true },
            { tipo: 'CATEGORIA', valor: 'SALSAS', padre: 'DESPENSA', estancia: 'DESPENSA', activo: true },
            { tipo: 'CATEGORIA', valor: 'HIGIENE', padre: 'MATERIAL', estancia: 'MATERIAL', activo: true },
            { tipo: 'ESTANCIA', valor: T, padre: '', estancia: '', activo: true }],
-  productos: [{ codigo: '8410000000001', nombre: 'Ketchup', categoria: 'CONDIMENTOS', unidad: 'g', contenido: 560 }],
+  productos: [{ codigo: '8410000000001', nombre: 'Ketchup', categoria: 'CONDIMENTOS', unidad: 'g', contenido: 560 },
+              { codigo: '8410000000002', nombre: 'Salsa de soja con menos sal', categoria: 'CONDIMENTOS', linea_objetivo: 'TA-15' }],
   stock: [{ codigo: '8410000000001', caducidad: '2030-01', almacen: T, estante: '', stock: 3 }]
 };
 
@@ -42,7 +45,7 @@ test('editar ficha no registra movimiento; deshacer vale para cualquier movimien
     await p.fill('#a-url', 'https://script.google.com/macros/s/X/exec');
     await p.fill('#a-token', 'k'); await p.fill('#a-usuario', 'Prueba');
     await p.evaluate(function () { return guardarAjustes(); });
-    await p.waitForFunction(function () { return Object.keys(catalogo).length === 1; });
+    await p.waitForFunction(function () { return Object.keys(catalogo).length === 2; });
     conexion = false; // así los movimientos quedan pendientes y se pueden contar
 
     // 0) Con «Material» elegido arriba, un producto de Despensa muestra las categorías de Despensa
@@ -80,8 +83,19 @@ test('editar ficha no registra movimiento; deshacer vale para cualquier movimien
     await p.waitForFunction(function () { return document.querySelectorAll('#lista-historial .deshacer').length === 2; }, null, { timeout: 5000 }).catch(function () {});
     const botones = await p.$$('#lista-historial .deshacer');
     assert.strictEqual(botones.length, 2, 'cada movimiento tiene su Deshacer');
-    await botones[1].click(); await botones[1].click(); // confirmar
+    // Dos toques seguidos (el segundo confirma), en el mismo instante para que no se repinte la lista entre medias
+    await p.evaluate(function () { const b = document.querySelectorAll('#lista-historial .deshacer')[1]; b.click(); b.click(); });
     await p.waitForFunction(async function () { return (await idb.todos('pendientes')).length === 1; });
+    // 4) Soja mal asignada a «Sal»: al pasarla a Salsas se quita la línea y se guarda NINGUNA
+    await p.evaluate(function () { return abrirFormulario('8410000000002', { editar: true }); });
+    assert.strictEqual(await p.inputValue('#p-linea'), 'TA-15');
+    assert.strictEqual(await p.evaluate(function () { return puntuarLinea(objetivos[0]); }), 0, '«menos sal» no puntúa para Sal');
+    await p.click('#p-categorias >> text=Salsas');
+    assert.strictEqual(await p.inputValue('#p-linea'), '');
+    await p.click('#f-guardar-cambios');
+    await p.waitForFunction(function () { return catalogo['8410000000002'].linea_objetivo === 'NINGUNA' && catalogo['8410000000002'].categoria === 'SALSAS'; });
+    const r = await p.evaluate(function () { return calcularObjetivos(lotesTodos([]), 'Trastero Ávila').lineas.map(function (l) { return l.productos.length; }); });
+    assert.deepStrictEqual(r, [0, 0]);
     assert.deepStrictEqual(errores, []);
   } finally {
     await navegador.close(); srv.close();
