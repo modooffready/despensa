@@ -259,7 +259,8 @@
       </div>
     </div>
 
-    <div class="tarjeta">
+    <button class="enlace oculto" id="f-con-mov">➕ Registrar también una entrada o salida</button>
+    <div class="tarjeta" id="f-mov">
       <div class="segmentado">
         <button id="f-entrada" class="activo">Entrada</button>
         <button id="f-salida">Salida</button>
@@ -296,9 +297,10 @@
     </div>
 
     <div class="barra-guardar">
-      <button class="btn btn-principal" id="f-guardar-seguir">Guardar y escanear otro</button>
+      <button class="btn btn-principal oculto" id="f-guardar-cambios">💾 Guardar cambios</button>
+      <button class="btn btn-principal" id="f-guardar-seguir">Guardar entrada y escanear otro</button>
       <div class="fila">
-        <button class="btn btn-sec" id="f-guardar">Guardar y terminar</button>
+        <button class="btn btn-sec" id="f-guardar">Guardar entrada y terminar</button>
         <button class="btn btn-sec" id="f-cancelar" style="flex:0 0 110px">Cancelar</button>
       </div>
     </div>
@@ -449,6 +451,6 @@
 </div>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.8.2"></script>
+<script src="app.js?v=2.8.3"></script>
 </body>
 </html>

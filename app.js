@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.8.2';
+const VERSION = '2.8.3';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -299,6 +299,8 @@ function enlazarEventos() {
 
   $('f-editar').onclick = function () { $('f-ficha').classList.toggle('oculto'); };
   $('p-guardar-ficha').onclick = guardarSoloFicha;
+  $('f-guardar-cambios').onclick = guardarSoloFicha;
+  $('f-con-mov').onclick = function () { ponerModoEdicion(false); };
   $('p-linea').onchange = function () {
     if ($('p-linea').value === '__todas') { pintarLineas('__todas'); return; }
     actual.lineaTocada = true;
@@ -412,8 +414,8 @@ async function pintarHistorial() {
   }
   const lista = $('lista-historial');
   if (!h.length) { lista.innerHTML = '<li class="muted">Todavía no hay movimientos</li>'; return; }
-  const ultimo = h[0];
-  const sePuedeDeshacer = ultimo && !ultimo.deshecho && !ultimo.esDeshacer && (ultimo.estado === 'ok' || ultimo.estado === 'pendiente');
+  // Se puede deshacer cualquier movimiento de la lista (no solo el último), salvo los ya deshechos o las correcciones
+  const sePuedeDeshacer = function (m) { return !m.deshecho && !m.esDeshacer && (m.estado === 'ok' || m.estado === 'pendiente'); };
   lista.innerHTML = h.slice(0, 25).map(function (m) {
     const icono = m.deshecho ? '↩️' : m.estado === 'ok' ? '✅' : (m.estado === 'pendiente' ? '⏳' : '⚠️');
     return '<li><div><span class="tag ' + esc(m.tipo) + '">' + esc(m.tipo) + '</span> ' +
@@ -422,24 +424,31 @@ async function pintarHistorial() {
       ' · ' + new Date(m.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) +
       (m.estado !== 'ok' && m.estado !== 'pendiente' ? '<br><span class="error">' + esc(m.estado) + '</span>' : '') +
       (m.deshecho ? '<br><span class="muted">deshecho</span>' : '') + (m.esDeshacer ? '<br><span class="muted">corrección</span>' : '') +
-      (m === ultimo && sePuedeDeshacer ? '<br><button class="deshacer" data-id="' + esc(m.id) + '">↩️ Deshacer</button>' : '') +
+      (sePuedeDeshacer(m) ? '<br><button class="deshacer" data-id="' + esc(m.id) + '">↩️ Deshacer</button>' : '') +
       '</div></div><div>' + icono + '</div></li>';
   }).join('');
-  const b = lista.querySelector('.deshacer');
-  if (b) b.onclick = function () {
-    if (!b.classList.contains('confirmar')) {
-      b.classList.add('confirmar'); b.textContent = '¿Seguro? Toca otra vez';
-      setTimeout(function () { b.classList.remove('confirmar'); b.textContent = '↩️ Deshacer'; }, 3500);
-      return;
-    }
-    deshacer(b.dataset.id);
-  };
+  cada(lista.querySelectorAll('.deshacer'), function (b) {
+    b.onclick = function () {
+      if (!b.classList.contains('confirmar')) {
+        b.classList.add('confirmar'); b.textContent = '¿Seguro? Toca otra vez';
+        setTimeout(function () { b.classList.remove('confirmar'); b.textContent = '↩️ Deshacer'; }, 3500);
+        return;
+      }
+      deshacer(b.dataset.id);
+    };
+  });
 }
 
-// Deshacer el último movimiento: si no se ha enviado, se borra; si ya se envió, se registra el contrario
+// Deshacer un movimiento: si no se ha enviado, se borra; si ya se envió, se registra el contrario
 async function deshacer(id) {
   const m = await idb.get('historial', id);
   if (!m) return;
+  // Quitar una entrada no puede dejar el lote en negativo (p. ej. si después ya se sacó)
+  if (m.tipo === 'ENTRADA') {
+    pendientesCache = await idb.todos('pendientes');
+    const lote = lotesDe(m.codigo).find(function (l) { return (l.caducidad || '') === (m.caducidad || '') && l.almacen === m.almacen && (l.estante || '') === (m.estante || ''); });
+    if (!lote || lote.stock < m.cantidad) { toast('No se puede deshacer: ese lote ya no tiene esas unidades.', 4000); return; }
+  }
   const pend = await idb.get('pendientes', id);
   if (pend) {
     await idb.borrar('pendientes', id);
@@ -447,11 +456,6 @@ async function deshacer(id) {
     toast('Movimiento anulado (no se había enviado)');
   } else {
     const contrario = m.tipo === 'ENTRADA' ? 'SALIDA' : 'ENTRADA';
-    if (contrario === 'SALIDA') {
-      pendientesCache = await idb.todos('pendientes');
-      const lote = lotesDe(m.codigo).find(function (l) { return (l.caducidad || '') === (m.caducidad || '') && l.almacen === m.almacen && (l.estante || '') === (m.estante || ''); });
-      if (!lote || lote.stock < m.cantidad) { toast('No se puede deshacer: ese lote ya no tiene esas unidades.', 4000); return; }
-    }
     const mov = { id: (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2)),
       fecha: new Date().toISOString(), usuario: ajustes.usuario || '', tipo: contrario, codigo: m.codigo, cantidad: m.cantidad,
       caducidad: m.caducidad || '', almacen: m.almacen, estante: m.estante || '', nota: 'Deshacer movimiento del ' + new Date(m.fecha).toLocaleString('es-ES') };
@@ -614,6 +618,8 @@ async function abrirFormulario(codigo, opciones_) {
     pintarUbicaciones(m.estante || '');
     origenFormulario = 'revision';
   }
+  // Editar una ficha no registra ningún movimiento, salvo que se pida expresamente
+  ponerModoEdicion(!!op.editar && !op.corregir);
   mostrar('formulario');
   pintarFoto();
   $('f-off').textContent = op.corregir ? '⚠️ Corrigiendo un movimiento rechazado: ' + op.corregir.motivo : '';
@@ -949,8 +955,23 @@ function lotesTodos(pendientes) {
 }
 function lotesDe(codigo) { return lotesTodos(pendientesCache)[codigo] || []; }
 
+// Modo edición: solo la ficha y «Guardar cambios». Modo movimiento: entrada/salida y sus botones.
+function ponerModoEdicion(soloFicha) {
+  $('f-mov').classList.toggle('oculto', soloFicha);
+  $('f-con-mov').classList.toggle('oculto', !soloFicha);
+  $('f-guardar-cambios').classList.toggle('oculto', !soloFicha);
+  $('f-guardar-seguir').classList.toggle('oculto', soloFicha);
+  $('f-guardar').classList.toggle('oculto', soloFicha);
+  $('p-guardar-ficha').classList.toggle('oculto', soloFicha);
+  $('f-editar').classList.toggle('oculto', soloFicha);
+  if (soloFicha) $('f-ficha').classList.remove('oculto');
+}
+
 function cambiarTipo(tipo) {
   tipoActual = tipo;
+  const palabra = tipo === 'SALIDA' ? 'salida' : 'entrada';
+  $('f-guardar-seguir').textContent = 'Guardar ' + palabra + ' y escanear otro';
+  $('f-guardar').textContent = 'Guardar ' + palabra + ' y terminar';
   $('f-entrada').classList.toggle('activo', tipo === 'ENTRADA');
   $('f-salida').classList.toggle('activo', tipo === 'SALIDA');
   $('f-salida').classList.toggle('salida', tipo === 'SALIDA');
