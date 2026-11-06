@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.6.0';
+const VERSION = '2.6.1';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -67,7 +67,8 @@ const ultimaCad = {};
 let pendientesCache = [];
 let vistaStock = 'producto';
 let tipoLista = 'CATEGORIA';
-let stockFiltrado = true;
+// Filtros de Stock: se inician con el contexto de Registrar al abrir la pestaña, pero no lo cambian
+let stockGrupo = '', stockModo = 'TODO';
 let resincronizar = false;
 let soloIncompletos = false;
 let soloCaducan = false;
@@ -160,7 +161,9 @@ function grupos() {
 }
 function grupoActual() { const g = grupos(); return g.indexOf(ajustes.grupo) >= 0 ? ajustes.grupo : g[0]; }
 function modoActual() { return ajustes.modo === 'MATERIAL' ? 'MATERIAL' : 'DESPENSA'; }
-function estanciasDelGrupo(g) { return estancias().filter(function (e) { return grupoDe(e) === g; }); }
+function estanciasDelGrupo(g) { return estancias().filter(function (e) { return enGrupo(e, g); }); }
+// ¿Esta estancia pertenece al grupo? (compara sin tildes, mayúsculas ni espacios de más)
+function enGrupo(almacen, g) { return !!g && normalizar(grupoDe(almacen)) === normalizar(g); }
 function estancias() { const e = valores('ESTANCIA'); return e.length ? e : [ESTANCIA_RESERVA]; }
 function ubicacionesDe(est) { return valores('UBICACION', est); }
 
@@ -241,15 +244,17 @@ function enlazarEventos() {
   ['DESPENSA', 'MATERIAL'].forEach(function (m) {
     $('c-' + m).onclick = async function () { ajustes.modo = m; await guardarAjustesLocales(); pintarContexto(); };
   });
-  $('s-filtro').onclick = function () { stockFiltrado = !stockFiltrado; pintarStock(); };
+  ['DESPENSA', 'MATERIAL', 'TODO'].forEach(function (m) {
+    $('s-m-' + m).onclick = function () { stockModo = m; pintarStock(); };
+  });
   $('l-modo').onchange = pintarListas;
   $('btn-sincronizar').onclick = function () { sincronizar(true); };
   $('btn-escanear').onclick = abrirEscaner;
   $('t-inicio').onclick = function () { mostrar('inicio'); };
-  $('t-stock').onclick = function () { soloCaducan = false; abrirStock(); };
+  $('t-stock').onclick = function () { soloCaducan = false; stockGrupo = grupoActual(); stockModo = modoActual(); abrirStock(); };
   $('btn-buscar').onclick = function () { soloIncompletos = false; abrirBuscar(); };
   $('btn-incompletos').onclick = function () { soloIncompletos = true; abrirBuscar(); };
-  $('btn-caducidades').onclick = function () { soloCaducan = true; stockFiltrado = false; abrirStock(); };
+  $('btn-caducidades').onclick = function () { soloCaducan = true; stockGrupo = ''; stockModo = 'TODO'; abrirStock(); };
   $('s-caducan').onclick = function () { soloCaducan = !soloCaducan; pintarStock(); };
   $('s-informe').onclick = abrirInforme;
   $('i-volver').onclick = abrirStock;
@@ -569,7 +574,7 @@ async function abrirFormulario(codigo, opciones_) {
   let sitio = (ajustes.sitioPorCodigo || {})[codigo] || {};
   // Si no hay un sitio recordado, se usa dónde ya hay stock de ese producto en este grupo
   if (!sitio.almacen || delGrupo.indexOf(sitio.almacen) < 0) {
-    const l = lotesDe(codigo).find(function (x) { return delGrupo.indexOf(x.almacen) >= 0; });
+    const l = lotesDe(codigo).find(function (x) { return enGrupo(x.almacen, grupoActual()); });
     if (l) sitio = { almacen: l.almacen, estante: l.estante };
   }
   const preferida = [sitio.almacen, ajustes.ultimoAlmacen].find(function (e) { return e && delGrupo.indexOf(e) >= 0; }) || delGrupo[0];
@@ -921,8 +926,7 @@ function cambiarTipo(tipo) {
   $('f-entrada').classList.toggle('activo', tipo === 'ENTRADA');
   $('f-salida').classList.toggle('activo', tipo === 'SALIDA');
   $('f-salida').classList.toggle('salida', tipo === 'SALIDA');
-  const delGrupo = estanciasDelGrupo(grupoActual());
-  const lotes = tipo === 'SALIDA' ? lotesDe(actual.codigo).filter(function (l) { return delGrupo.indexOf(l.almacen) >= 0; }) : [];
+  const lotes = tipo === 'SALIDA' ? lotesDe(actual.codigo).filter(function (l) { return enGrupo(l.almacen, grupoActual()); }) : [];
   $('f-lotes-caja').classList.toggle('oculto', !lotes.length);
   $('f-lotes').innerHTML = lotes.map(function (l, i) {
     return '<button class="chip" data-i="' + i + '">' + esc(l.caducidad || 'sin cad.') + ' · ' +
@@ -939,7 +943,10 @@ function elegirLote(l, boton) {
   boton.classList.add('activo');
   const partes = (l.caducidad || '').split('-');
   ponerCaducidad(partes[0] || '', partes[1] || '');
-  if (l.almacen) $('f-almacen').value = l.almacen;
+  if (l.almacen) {
+    const ests = estanciasDelGrupo(grupoActual());
+    opcionesConValor($('f-almacen'), ests, l.almacen);
+  }
   pintarUbicaciones(l.estante);
   if (l.estante && $('f-estante').value !== l.estante) {
     // ubicación antigua que ya no está en la lista
@@ -1109,14 +1116,21 @@ function htmlLote(l, conSitio) {
     (conSitio ? ' · ' + esc(l.almacen) + (l.estante ? ' · ' + esc(l.estante) : '') : '') + ' · ' + l.stock + ' uds';
 }
 
+function pintarFiltrosStock() {
+  $('s-grupos').innerHTML = ['<button class="' + (!stockGrupo ? 'activo' : '') + '" data-g="">Todas</button>'].concat(grupos().map(function (x) {
+    return '<button class="' + (enGrupo(x, stockGrupo) ? 'activo' : '') + '" data-g="' + esc(x) + '" title="' + esc(x) + '">' + esc(nombreCorto(x)) + '</button>';
+  })).join('');
+  cada($('s-grupos').children, function (b) { b.onclick = function () { stockGrupo = b.dataset.g; pintarStock(); }; });
+  ['DESPENSA', 'MATERIAL', 'TODO'].forEach(function (m) { $('s-m-' + m).classList.toggle('activo', stockModo === m); });
+}
+
 function pintarStock() {
   ['producto', 'categoria', 'estancia'].forEach(function (v) { $('s-v-' + v).classList.toggle('activo', v === vistaStock); });
   const porCodigo = lotesTodos(pendientesCache);
   const q = normalizar($('s-buscar').value);
-  const g = grupoActual(), modo = modoActual(), delGrupo = estanciasDelGrupo(g);
-  $('s-filtro').textContent = stockFiltrado ? '📍 Solo ' + g + ' · ' + (modo === 'MATERIAL' ? 'Material' : 'Despensa') + '  (tocar para ver todo)' : 'Viendo todo (tocar para filtrar)';
-  $('s-filtro').classList.toggle('activo', stockFiltrado);
+  pintarFiltrosStock();
   $('s-caducan').classList.toggle('activo', soloCaducan);
+  let total = 0, fueraSitio = 0, fueraModo = 0;
 
   // Filas planas: un lote por fila
   const lotes = [];
@@ -1124,10 +1138,12 @@ function pintarStock() {
     const p = catalogo[c] || {};
     const texto = normalizar((p.nombre || '') + ' ' + (p.marca || '') + ' ' + bonito(p.categoria || ''));
     if (q && texto.indexOf(q) < 0) return;
-    if (stockFiltrado && p.categoria && modoDe(p.categoria) && modoDe(p.categoria) !== modo) return;
+    const m = p.categoria ? modoDe(p.categoria) : '';
     porCodigo[c].forEach(function (l) {
-      if (stockFiltrado && delGrupo.indexOf(l.almacen) < 0) return;
       if (soloCaducan && (p.tipo === 'EQUIPO' || !estadoCaducidad(l.caducidad))) return;
+      total++;
+      if (stockGrupo && !enGrupo(l.almacen, stockGrupo)) { fueraSitio++; return; }
+      if (stockModo !== 'TODO' && m && m !== stockModo) { fueraModo++; return; }
       lotes.push(Object.assign({ codigo: c }, l));
     });
   });
@@ -1140,7 +1156,19 @@ function pintarStock() {
   $('s-resumen').textContent = Object.keys(productos).length + ' productos' + (caducados ? ' · ⚠️ ' + caducados + ' lotes caducados' : '') +
     (ajustes.ultimaSync ? ' · datos de ' + new Date(ajustes.ultimaSync).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
-  if (!lotes.length) { $('s-lista').innerHTML = '<p class="muted">' + (q ? 'Nada coincide con la búsqueda.' : 'No hay stock registrado.') + '</p>'; return; }
+  if (!lotes.length) {
+    // Explicar por qué sale vacío y ofrecer quitar el filtro
+    let txt = q ? 'Nada coincide con la búsqueda.' : (soloCaducan ? 'No hay lotes que caduquen pronto.' : 'No hay stock registrado.');
+    if (total) {
+      const partes = [];
+      if (fueraSitio) partes.push(fueraSitio + ' en otras estancias');
+      if (fueraModo) partes.push(fueraModo + ' en ' + (stockModo === 'DESPENSA' ? 'Material' : 'Despensa'));
+      txt = 'Con estos filtros no sale nada. Hay ' + total + ' lotes: ' + partes.join(' y ') + '.';
+    }
+    $('s-lista').innerHTML = '<p class="muted">' + esc(txt) + '</p>' + (total ? '<button class="btn btn-sec" id="s-ver-todo">Ver todo</button>' : '');
+    if ($('s-ver-todo')) $('s-ver-todo').onclick = function () { stockGrupo = ''; stockModo = 'TODO'; pintarStock(); };
+    return;
+  }
 
   function tarjetaProducto(codigo, susLotes, conSitio) {
     const p = catalogo[codigo] || {};
@@ -1325,7 +1353,7 @@ function pintarInforme() {
     const p = catalogo[c] || {};
     if (informe.alcance === 'sitio' && p.categoria && modoDe(p.categoria) && modoDe(p.categoria) !== modo) return;
     porCodigo[c].forEach(function (l) {
-      if (informe.alcance === 'sitio' && delGrupo.indexOf(l.almacen) < 0) return;
+      if (informe.alcance === 'sitio' && !enGrupo(l.almacen, g)) return;
       const e = p.tipo === 'EQUIPO' ? '' : estadoCaducidad(l.caducidad);
       if (informe.lotes === 'caducan' && !e) return;
       filas.push({ codigo: c, nombre: p.nombre || '(sin nombre)', marca: p.marca || '', categoria: p.categoria || 'SIN CATEGORÍA',

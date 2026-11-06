@@ -313,9 +313,16 @@
       <button id="s-v-categoria">Categoría</button>
       <button id="s-v-estancia">Estancia</button>
     </div>
-    <div class="fila" style="margin-bottom:8px;flex-wrap:wrap;gap:6px">
-      <button class="chip activo" id="s-filtro" style="flex:1 1 auto"></button>
-      <button class="chip" id="s-caducan" style="flex:0 0 auto">⏰ Caducan pronto</button>
+    <div class="tarjeta contexto" style="margin-bottom:8px">
+      <div id="s-grupos" class="c-grupos" aria-label="Estancia"></div>
+      <div class="segmentado peq" aria-label="Despensa o material">
+        <button id="s-m-DESPENSA">🥫 Despensa</button>
+        <button id="s-m-MATERIAL">🧰 Material</button>
+        <button id="s-m-TODO">Todo</button>
+      </div>
+    </div>
+    <div class="fila" style="margin-bottom:8px;gap:6px">
+      <button class="chip" id="s-caducan">⏰ Caducan pronto</button>
     </div>
     <button class="btn btn-sec" id="s-informe" style="margin:0 0 8px">🖨️ Informe para revisar / PDF</button>
     <input id="s-buscar" type="search" placeholder="🔎 Escribe parte del nombre: choco, atún…">
@@ -402,6 +409,6 @@
 </div>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.6.0"></script>
+<script src="app.js?v=2.6.1"></script>
 </body>
 </html>
