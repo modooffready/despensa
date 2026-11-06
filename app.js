@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.7.0';
+const VERSION = '2.7.1';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -1564,6 +1564,19 @@ function aplicarDatos(d) {
   stockServidor = d.stock || [];
   if (Array.isArray(d.config) && d.config.length) listas = d.config;
   objetivos = d.objetivos || [];
+  // Servidor 2.6 o posterior: fecha de la última copia de seguridad de la hoja ('' = ninguna)
+  if (d.ultimaCopia !== undefined) ajustes.ultimaCopia = d.ultimaCopia || '';
+}
+
+// Línea de Ajustes con el estado de la copia de seguridad semanal
+function pintarCopia() {
+  const el = $('a-copia');
+  if (ajustes.ultimaCopia === undefined) { el.textContent = ''; return; } // servidor antiguo
+  if (!ajustes.ultimaCopia) { el.textContent = '⚠️ Copia de seguridad: todavía no se ha hecho ninguna'; return; }
+  const f = new Date(ajustes.ultimaCopia);
+  const dias = Math.floor((Date.now() - f.getTime()) / 86400000);
+  el.textContent = (dias > 8 ? '⚠️ ' : '') + 'Última copia de seguridad: ' + f.toLocaleDateString('es-ES') +
+    (dias > 8 ? ' (hace ' + dias + ' días: revisa la copia semanal en Apps Script)' : '');
 }
 
 async function sincronizar(manual) {
@@ -1635,7 +1648,7 @@ async function sincronizar(manual) {
     if (resincronizar) { resincronizar = false; setTimeout(function () { sincronizar(false); }, 500); }
     await refrescarEstado();
     await pintarHistorial();
-    if (!$('pantalla-ajustes').classList.contains('oculto')) pintarListas();
+    if (!$('pantalla-ajustes').classList.contains('oculto')) { pintarListas(); pintarCopia(); }
     pintarContexto();
   }
 }
@@ -1646,6 +1659,7 @@ function abrirAjustes() {
   $('a-token').value = ajustes.token || '';
   $('a-usuario').value = ajustes.usuario || '';
   $('a-resultado').textContent = '';
+  pintarCopia();
   pintarListas();
   mostrar('ajustes');
 }
@@ -1670,7 +1684,7 @@ async function probarConexion() {
   try {
     const r = await llamar('GET', { accion: 'ping' });
     $('a-resultado').textContent = '✅ Conexión correcta' + (r.clave ? ' · clave de ' + r.clave : '') +
-      (r.version >= 2.5 ? '' : ' (servidor antiguo: actualiza Codigo.gs a la v2.5)') +
+      (r.version >= 2.6 ? '' : ' (servidor antiguo: actualiza Codigo.gs a la v2.6)') +
       (r.clave === 'clave antigua' ? '. Cambia a tu clave personal cuando la tengas.' : '') + '. Pulsa Guardar.';
   } catch (e) {
     $('a-resultado').textContent = '❌ ' + e.message;

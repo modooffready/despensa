@@ -1,5 +1,5 @@
 /**
- * DESPENSA — Backend en Google Apps Script (v2.5)
+ * DESPENSA — Backend en Google Apps Script (v2.6)
  *
  * Funciones para ejecutar a mano desde el editor:
  *  - configurar(): solo la primera vez (crea pestañas y TOKEN). YA HECHO.
@@ -13,6 +13,9 @@
  *  - anularClaves(): anula las claves de las personas puestas en ANULAR_CLAVES.
  *  - cerrarAccesoAntiguo(): cuando todos los móviles usen su clave nueva, anula la clave antigua.
  *  - migrarV22(): una vez, al pasar a la v2.2 (modo Despensa/Material de cada categoría y nombres de los coches).
+ *  - activarCopiaSemanal(): v2.6, una vez. Programa la copia de seguridad de cada lunes y hace la primera.
+ *  - copiaSeguridad(): hace una copia ahora mismo (la usa la programación semanal; también a mano).
+ *  - desactivarCopiaSemanal(): quita la programación (las copias ya hechas se conservan).
  *
  * Lo demás lo usa la app del móvil (doGet / doPost).
  */
@@ -210,7 +213,7 @@ function historialDe_(codigo) {
 /* ============================================================
  * 3) WEB APP — lo que llama el móvil
  * ============================================================ */
-const VERSION_SERVIDOR = 2.5;
+const VERSION_SERVIDOR = 2.6;
 
 // Lecturas por la dirección (GET): solo para apps antiguas y solo con la clave antigua.
 // Desaparece al ejecutar cerrarAccesoAntiguo().
@@ -235,8 +238,9 @@ function doPost(e) {
 
 function responder_(accion, d, quien) {
   switch (accion) {
-    case 'ping': return { ok: true, hora: new Date().toISOString(), version: VERSION_SERVIDOR, clave: quien };
-    case 'datos': return { ok: true, productos: leerProductos_(), stock: calcularStock_(), config: leerConfig_(), objetivos: leerObjetivos_() };
+    case 'ping': return { ok: true, hora: new Date().toISOString(), version: VERSION_SERVIDOR, clave: quien, ultimaCopia: ultimaCopia_() };
+    case 'datos': return { ok: true, productos: leerProductos_(), stock: calcularStock_(), config: leerConfig_(), objetivos: leerObjetivos_(),
+                           ultimaCopia: ultimaCopia_() };
     case 'catalogo': return { ok: true, productos: leerProductos_() };
     case 'historial': return { ok: true, movimientos: historialDe_(d.codigo) };
     case 'miniatura': return miniatura_(d.codigo);
@@ -298,6 +302,73 @@ function quienEs_(t) {
   const antigua = PropertiesService.getScriptProperties().getProperty('TOKEN');
   return antigua && t === antigua ? 'clave antigua' : '';
 }
+
+/* ============================================================
+ * COPIA DE SEGURIDAD SEMANAL (v2.6)
+ * Exporta la hoja entera a Excel (.xlsx) en la carpeta "Copias de seguridad",
+ * junto a la hoja, y conserva solo las últimas COPIAS_A_GUARDAR.
+ * Las fotos no se copian (ya están en Drive y ocuparían el doble).
+ * Si una copia falla, Google envía un correo de aviso a la cuenta dueña del script.
+ * ============================================================ */
+const COPIAS_A_GUARDAR = 4;
+const CARPETA_COPIAS = 'Copias de seguridad';
+const PREFIJO_COPIA = 'Despensa copia ';
+
+function activarCopiaSemanal() {
+  quitarProgramacion_();
+  ScriptApp.newTrigger('copiaSeguridad').timeBased()
+    .onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(4).inTimezone('Europe/Madrid').create();
+  copiaSeguridad();
+  Logger.log('Copia semanal activada: cada lunes entre las 4 y las 5 de la mañana. La primera ya está hecha.');
+}
+
+function desactivarCopiaSemanal() {
+  const n = quitarProgramacion_();
+  Logger.log(n ? 'Copia semanal desactivada. Las copias ya hechas siguen en Drive.' : 'No había copia semanal programada.');
+}
+
+function quitarProgramacion_() {
+  let n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'copiaSeguridad') { ScriptApp.deleteTrigger(t); n++; }
+  });
+  return n;
+}
+
+function copiaSeguridad() {
+  const ss = SpreadsheetApp.getActive();
+  SpreadsheetApp.flush();
+  const url = 'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=xlsx';
+  const resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } });
+  const codigo = resp.getResponseCode();
+  // Si falla, se lanza un error: así Google avisa por correo y no se borra ninguna copia anterior
+  if (codigo !== 200) throw new Error('No se pudo exportar la hoja (respuesta ' + codigo + ')');
+  const blob = resp.getBlob();
+  if (blob.getBytes().length < 2000) throw new Error('La copia ha salido vacía; no se guarda');
+
+  const carpeta = subcarpeta_(CARPETA_COPIAS);
+  const nombre = PREFIJO_COPIA + Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HHmm') + '.xlsx';
+  carpeta.createFile(blob.setName(nombre));
+
+  // Solo se borran copias hechas por esta función (mismo prefijo), de la más antigua a la más nueva
+  const copias = [];
+  const it = carpeta.getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    if (f.getName().indexOf(PREFIJO_COPIA) === 0 && /\.xlsx$/.test(f.getName())) copias.push(f);
+  }
+  copias.sort(function (a, b) { return b.getDateCreated().getTime() - a.getDateCreated().getTime(); });
+  const borradas = copias.slice(COPIAS_A_GUARDAR);
+  borradas.forEach(function (f) { f.setTrashed(true); });
+
+  PropertiesService.getScriptProperties().setProperty('ULTIMA_COPIA', new Date().toISOString());
+  Logger.log('Copia guardada: ' + nombre + ' (' + Math.round(blob.getBytes().length / 1024) + ' KB). ' +
+             'Copias conservadas: ' + Math.min(copias.length, COPIAS_A_GUARDAR) + '. Enviadas a la papelera: ' + borradas.length + '.');
+}
+
+// Fecha de la última copia correcta (ISO) o '' si aún no hay ninguna
+function ultimaCopia_() { return PropertiesService.getScriptProperties().getProperty('ULTIMA_COPIA') || ''; }
 
 /* ============================================================
  * VALIDACIÓN Y SANEADO (v2.5)
@@ -424,12 +495,15 @@ function rellenarDesdeOFF_(r, off) {
   r[alta] = 'openfoodfacts';
 }
 
-function carpetaFotos_() {
+function carpetaFotos_() { return subcarpeta_('Fotos'); }
+
+// Subcarpeta dentro de la carpeta donde está la hoja (la crea si no existe)
+function subcarpeta_(nombre) {
   const ss = SpreadsheetApp.getActive();
   const padres = DriveApp.getFileById(ss.getId()).getParents();
   const base = padres.hasNext() ? padres.next() : DriveApp.getRootFolder();
-  const sub = base.getFoldersByName('Fotos');
-  return sub.hasNext() ? sub.next() : base.createFolder('Fotos');
+  const sub = base.getFoldersByName(nombre);
+  return sub.hasNext() ? sub.next() : base.createFolder(nombre);
 }
 
 // Devuelve la foto de Drive de un producto (miniatura si existe) en base64, para mostrarla en el móvil
