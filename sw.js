@@ -1,7 +1,7 @@
 /* Service worker: guarda la app en el móvil para que abra sin conexión.
  * Estrategia: con red, siempre la versión nueva (espera máx. 3 s); sin red, la guardada.
  * Si cambias archivos, cambia VERSION aquí y en index.html (app.js?v=...). */
-const VERSION = '2.4.7';
+const VERSION = '2.6.0';
 const CACHE = 'despensa-v' + VERSION;
 const ARCHIVOS = ['./', './index.html', './app.js?v=' + VERSION, './manifest.json', './icon-192.png', './icon-512.png'];
 
