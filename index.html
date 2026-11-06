@@ -63,6 +63,38 @@
   .caducado { color:var(--rojo); font-weight:700; }
   .pronto { color:#a86a00; font-weight:700; }
   .codigo { font-family:monospace; color:var(--gris); }
+  /* ---- Ficha de producto (estilo biblioteca) ---- */
+  .sheet { position:fixed; inset:0; background:#0006; display:flex; align-items:flex-end; justify-content:center; opacity:0; pointer-events:none; transition:opacity .2s; z-index:30; }
+  .sheet.on { opacity:1; pointer-events:auto; }
+  .shcard { background:#fffdf8; width:100%; max-width:560px; border-radius:18px 18px 0 0; padding:8px 16px calc(16px + env(safe-area-inset-bottom)); transform:translateY(30px); transition:transform .25s; max-height:88vh; overflow:auto; touch-action:pan-y; }
+  .sheet.on .shcard { transform:none; }
+  .shbar { display:flex; justify-content:center; position:relative; height:30px; }
+  .grab { width:42px; height:5px; border-radius:9px; background:#d6ccb9; margin-top:6px; }
+  .shbar button { position:absolute; right:0; top:0; border:0; background:#e6e1d6; border-radius:8px; padding:4px 10px; font-size:16px; }
+  .pf { border-left:5px solid var(--verde); border-radius:12px; background:#fff; padding:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .pf-grid { display:grid; grid-template-columns:110px minmax(0,1fr); gap:14px; align-items:start; }
+  .pf-grid > div { min-width:0; overflow-wrap:anywhere; }
+  .pf-cov img, .pf-cov svg { width:110px; height:auto; aspect-ratio:3/4; object-fit:cover; display:block; border-radius:6px; box-shadow:0 6px 16px #0003, 0 1px 3px #0003; background:#f4f1ea; }
+  .pf-cov small { display:block; font-size:10.5px; color:var(--gris); text-align:center; margin-top:6px; }
+  .pf-loc { font-size:12.5px; color:var(--verde); font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
+  .pf h2 { font-family:Georgia, 'Times New Roman', serif; font-size:23px; line-height:1.2; margin:6px 0 2px; }
+  .pf-m { color:var(--gris); font-size:15px; }
+  .pf-chips { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 4px; }
+  .pf-chip { font-size:12px; font-weight:600; padding:3px 9px; border-radius:999px; background:#f4f1ea; border:1px solid #e4dccd; }
+  .pf-chip.t { background:var(--verde); color:#fff; border-color:var(--verde); }
+  .pf-stock { display:flex; align-items:baseline; gap:6px; margin:12px 0 4px; }
+  .pf-stock b { font-family:Georgia, serif; font-size:30px; color:var(--verde); }
+  .pf-lote { display:flex; justify-content:space-between; gap:8px; font-size:14px; padding:6px 0; border-top:1px solid #f0ebe0; }
+  .cad { font-size:12px; font-weight:700; padding:2px 8px; border-radius:6px; background:#e6efe8; color:#1e6b33; white-space:nowrap; }
+  .cad.pronto { background:#f6e7c8; color:#7a5410; } .cad.caducado { background:#f3d8d6; color:var(--rojo); } .cad.sin { background:#eee; color:var(--gris); }
+  .pf-aviso { font-size:13px; color:#8a6d00; margin-top:8px; }
+  .pf-nav { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:10px 0 4px; }
+  .pf-nav button { border:1px solid #e4dccd; background:#fff; border-radius:8px; padding:8px 12px; font-size:15px; }
+  .pf-nav button:disabled { opacity:.35; }
+  .pf-nav span { color:var(--gris); font-size:13px; }
+  @keyframes inr { from { opacity:0; transform:translateX(28px); } to { opacity:1; transform:none; } }
+  @keyframes inl { from { opacity:0; transform:translateX(-28px); } to { opacity:1; transform:none; } }
+  .in-r { animation:inr .25s ease; } .in-l { animation:inl .25s ease; }
   .grupo { margin:18px 2px 8px; font-weight:700; color:var(--verde); font-size:16px; border-bottom:2px solid var(--verde); padding-bottom:4px; }
   .tag-cat { display:inline-block; font-size:12px; font-weight:700; padding:2px 8px; border-radius:10px; background:#e6efe8; color:var(--verde); margin-top:6px; }
   .tag-equipo { background:#e8e6f3; color:#4a3f8a; }
@@ -109,8 +141,8 @@
       <button class="btn btn-sec" id="btn-buscar">🔎 Buscar / sin código</button>
     </div>
     <div class="fila">
-      <input id="codigo-manual" inputmode="numeric" placeholder="o escribe el código">
-      <button class="btn btn-sec" id="btn-codigo-manual" style="flex:0 0 90px;margin:0">OK</button>
+      <input id="codigo-manual" type="search" enterkeyhint="search" placeholder="🔎 Busca: choco, atún, pilas…">
+      <button class="btn btn-sec" id="btn-codigo-manual" style="flex:0 0 100px;margin:0">Buscar</button>
     </div>
 
     <div class="tarjeta" style="margin-top:14px">
@@ -215,7 +247,7 @@
   <!-- BUSCAR PRODUCTO -->
   <section id="pantalla-buscar" class="oculto">
     <p class="muted" style="margin-top:0">Para productos sin código de barras, con la etiqueta rota o que ya no tienen stock.</p>
-    <input id="b-buscar" placeholder="🔎 Nombre, marca o código">
+    <input id="b-buscar" type="search" placeholder="🔎 Escribe parte del nombre: choco, atún…">
     <button class="chip" id="b-solo-incompletos" style="margin-top:8px">⚠️ Ver solo los que faltan por completar</button>
     <div id="b-lista" style="margin-top:10px"></div>
     <button class="btn btn-principal" id="b-nuevo">➕ Crear artículo sin código</button>
@@ -230,7 +262,7 @@
       <button id="s-v-estancia">Estancia</button>
     </div>
     <button class="chip activo" id="s-filtro" style="margin-bottom:8px"></button>
-    <input id="s-buscar" placeholder="🔎 Buscar por nombre, marca o código">
+    <input id="s-buscar" type="search" placeholder="🔎 Escribe parte del nombre: choco, atún…">
     <div class="muted" id="s-resumen" style="margin:8px 2px"></div>
     <div id="s-lista"></div>
     <button class="btn btn-sec" id="s-volver">Volver</button>
@@ -282,7 +314,21 @@
   </section>
 </main>
 
+<!-- FICHA DE PRODUCTO (hoja inferior) -->
+<div class="sheet" id="ficha-sheet">
+  <div class="shcard" id="fs-card">
+    <div class="shbar"><div class="grab"></div><button id="fs-cerrar" aria-label="Cerrar">✕</button></div>
+    <div id="fs-cuerpo"></div>
+    <div class="pf-nav"><button id="fs-ant">‹ Anterior</button><span id="fs-cnt"></span><button id="fs-sig">Siguiente ›</button></div>
+    <div class="fila">
+      <button class="btn btn-principal" id="fs-entrada" style="font-size:18px;padding:16px">＋ Entrada</button>
+      <button class="btn btn-peligro" id="fs-salida" style="padding:16px">－ Salida</button>
+    </div>
+    <button class="btn btn-sec" id="fs-editar">✏️ Editar ficha</button>
+  </div>
+</div>
+
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.4.2"></script>
+<script src="app.js?v=2.4.3"></script>
 </body>
 </html>

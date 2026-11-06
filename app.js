@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.4.2';
+const VERSION = '2.4.3';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -57,6 +57,7 @@ let listas = [];         // [{tipo, valor, estancia, activo}] (pestaña Config)
 let objetivos = [];      // [{id, categoria, descripcion, almacen, …}]
 let prodPend = {};       // cambios de fichas de producto aún no enviados
 let fotosPend = {};      // codigo -> foto (dataURL) aún no subida
+let miniaturas = {};     // codigo -> foto pequeña guardada en el móvil (para verla siempre)
 let sincronizando = false;
 let ultimoError = '';
 let actual = null;       // producto abierto en el formulario
@@ -94,6 +95,7 @@ function mostrar(nombre) {
     $('pantalla-' + p).classList.toggle('oculto', p !== nombre);
   });
   if (nombre !== 'escaner') pararEscaner();
+  if ($('ficha-sheet')) $('ficha-sheet').classList.remove('on');
   window.scrollTo(0, 0);
 }
 
@@ -137,6 +139,7 @@ async function iniciar() {
   objetivos = (await idb.get('kv', 'objetivos')) || [];
   prodPend = (await idb.get('kv', 'prodPend')) || {};
   fotosPend = (await idb.get('kv', 'fotosPend')) || {};
+  miniaturas = (await idb.get('kv', 'miniaturas')) || {};
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn(e); });
@@ -181,6 +184,21 @@ function opcionesConValor(select, lista, valor, vacia) {
 
 function enlazarEventos() {
   $('btn-ajustes').onclick = abrirAjustes;
+  $('fs-cerrar').onclick = cerrarFicha;
+  $('ficha-sheet').onclick = function (e) { if (e.target === $('ficha-sheet')) cerrarFicha(); };
+  $('fs-ant').onclick = function () { moverFicha(-1); };
+  $('fs-sig').onclick = function () { moverFicha(1); };
+  $('fs-entrada').onclick = function () { const c = fichaActual.codigo; cerrarFicha(); abrirFormulario(c); };
+  $('fs-salida').onclick = function () { const c = fichaActual.codigo; cerrarFicha(); abrirFormulario(c, { salida: true }); };
+  $('fs-editar').onclick = function () { const c = fichaActual.codigo; cerrarFicha(); abrirFormulario(c, { editar: true }); };
+  // Deslizar a izquierda/derecha para pasar de producto
+  let x0 = null;
+  $('fs-card').addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true });
+  $('fs-card').addEventListener('touchend', function (e) {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0; x0 = null;
+    if (Math.abs(dx) > 60) moverFicha(dx < 0 ? 1 : -1);
+  });
   ['DESPENSA', 'MATERIAL'].forEach(function (m) {
     $('c-' + m).onclick = async function () { ajustes.modo = m; await guardarAjustesLocales(); pintarContexto(); };
   });
@@ -195,12 +213,18 @@ function enlazarEventos() {
   $('b-buscar').oninput = pintarBuscar;
   $('b-nuevo').onclick = function () { abrirFormulario(codigoInterno(), { sinCodigo: true, nombre: $('b-buscar').value.trim() }); };
   $('b-volver').onclick = function () { mostrar('inicio'); };
-  $('btn-codigo-manual').onclick = function () {
-    const c = normalizarCodigo($('codigo-manual').value);
-    if (!c) { toast('Escribe un código'); return; }
+  // Buscador de inicio: letras → busca por nombre (trozos: "choco" encuentra chocolate, pochocones…);
+  // un número largo → se trata como código de barras escrito a mano
+  function buscarDesdeInicio() {
+    const t = $('codigo-manual').value.trim();
+    if (!t) { toast('Escribe parte del nombre'); return; }
     $('codigo-manual').value = '';
-    abrirFormulario(c);
-  };
+    if (/^[\d\s-]{8,}$/.test(t)) { abrirFormulario(normalizarCodigo(t)); return; }
+    soloIncompletos = false;
+    abrirBuscar(t);
+  }
+  $('btn-codigo-manual').onclick = buscarDesdeInicio;
+  $('codigo-manual').onkeydown = function (e) { if (e.key === 'Enter') buscarDesdeInicio(); };
   $('btn-cancelar-escaner').onclick = function () { mostrar('inicio'); };
   $('btn-linterna').onclick = alternarLinterna;
 
@@ -580,11 +604,30 @@ function convertirCantidad(q, u) {
 }
 
 /* ---------- Fotos ---------- */
+// Foto que se puede mostrar en el móvil: la propia (guardada aquí) o la de Open Food Facts
+function fotoDe(codigo) {
+  const p = catalogo[codigo] || {};
+  return miniaturas[codigo] || fotosPend[codigo] || (p.foto_url && /openfoodfacts/.test(p.foto_url) ? p.foto_url : '');
+}
+// Si la foto está en Drive y este móvil no la tiene, se pide al servidor una vez
+const pidiendoFoto = {};
+async function traerMiniatura(codigo, alLlegar) {
+  const p = catalogo[codigo] || {};
+  if (miniaturas[codigo] || !p.foto_url || /openfoodfacts/.test(p.foto_url) || pidiendoFoto[codigo] || !navigator.onLine || !ajustes.url) return;
+  pidiendoFoto[codigo] = true;
+  try {
+    const r = await llamar('GET', { accion: 'miniatura', codigo: codigo });
+    miniaturas[codigo] = 'data:' + (r.tipo || 'image/jpeg') + ';base64,' + r.datos;
+    await idb.poner('kv', miniaturas, 'miniaturas');
+    if (alLlegar) alLlegar();
+  } catch (e) { /* servidor antiguo o sin foto: se queda la portada simulada */ }
+}
+
 function pintarFoto() {
   const img = $('f-foto');
   const p = catalogo[actual.codigo] || {};
-  const src = fotosPend[actual.codigo] || actual.fotoUrl ||
-    (p.foto_url && /openfoodfacts/.test(p.foto_url) ? p.foto_url : '');
+  const src = fotoDe(actual.codigo) || actual.fotoUrl;
+  if (!src) traerMiniatura(actual.codigo, function () { if (actual && $('pantalla-formulario').classList.contains('oculto') === false) pintarFoto(); });
   img.classList.toggle('oculto', !src);
   if (src) img.src = src;
   $('p-foto').textContent = (fotosPend[actual.codigo] || (p.foto_url && !/openfoodfacts/.test(p.foto_url))) ? '📷 Repetir foto' : '📷 Hacer foto';
@@ -598,6 +641,8 @@ async function tomarFoto(ev) {
     const dataUrl = await reducirImagen(archivo, 1000, 0.7);
     fotosPend[actual.codigo] = dataUrl;
     await idb.poner('kv', fotosPend, 'fotosPend');
+    miniaturas[actual.codigo] = await reducirImagen(archivo, 320, 0.7);
+    await idb.poner('kv', miniaturas, 'miniaturas');
     pintarFoto();
     toast('Foto guardada en el móvil; se subirá al sincronizar');
   } catch (e) {
@@ -941,7 +986,7 @@ function htmlLote(l, conSitio) {
 function pintarStock() {
   ['producto', 'categoria', 'estancia'].forEach(function (v) { $('s-v-' + v).classList.toggle('activo', v === vistaStock); });
   const porCodigo = lotesTodos(pendientesCache);
-  const q = $('s-buscar').value.trim().toLowerCase();
+  const q = normalizar($('s-buscar').value);
   const g = grupoActual(), modo = modoActual(), delGrupo = estanciasDelGrupo(g);
   $('s-filtro').textContent = stockFiltrado ? '📍 Solo ' + g + ' · ' + (modo === 'MATERIAL' ? 'Material' : 'Despensa') + '  (tocar para ver todo)' : 'Viendo todo (tocar para filtrar)';
   $('s-filtro').classList.toggle('activo', stockFiltrado);
@@ -950,7 +995,7 @@ function pintarStock() {
   const lotes = [];
   Object.keys(porCodigo).forEach(function (c) {
     const p = catalogo[c] || {};
-    const texto = ((p.nombre || '') + ' ' + (p.marca || '') + ' ' + c).toLowerCase();
+    const texto = normalizar((p.nombre || '') + ' ' + (p.marca || '') + ' ' + bonito(p.categoria || ''));
     if (q && texto.indexOf(q) < 0) return;
     if (stockFiltrado && p.categoria && modoDe(p.categoria) && modoDe(p.categoria) !== modo) return;
     porCodigo[c].forEach(function (l) {
@@ -1017,14 +1062,99 @@ function pintarStock() {
   }
   $('s-lista').innerHTML = html;
   cada($('s-lista').querySelectorAll('.prod'), function (d) {
-    d.onclick = function () { abrirFormulario(d.dataset.c, { salida: true }); };
+    d.onclick = function () { abrirFicha(d.dataset.c, listaVisible('#s-lista')); };
   });
 }
 
-/* ---------- Buscar producto (sin código / etiqueta rota / sin stock) ---------- */
-async function abrirBuscar() {
+/* ---------- Ficha de producto (estilo biblioteca) ---------- */
+const COLOR_CAT = { BEBIDA: '#2f7fa8', POTABILIZAR: '#3a8fb7', PLATOS_PREPARADOS: '#b5562b', CONSERVAS: '#5d6b3a', COCINAR: '#a07b2c',
+  CONDIMENTOS: '#8a5a2b', DESAYUNO: '#c0843a', SNACKS: '#7a2e3a', MENAJE_Y_GAS: '#4a5a6a', ENERGIA: '#c89b1e', HIGIENE: '#3d7a74',
+  LIMPIEZA: '#4f6f9a', BOTIQUIN: '#a8323a' };
+const ICONO_CAT = { BEBIDA: '💧', POTABILIZAR: '🫙', PLATOS_PREPARADOS: '🍲', CONSERVAS: '🥫', COCINAR: '🍚', CONDIMENTOS: '🧂',
+  DESAYUNO: '☕', SNACKS: '🍫', MENAJE_Y_GAS: '🔥', ENERGIA: '🔋', HIGIENE: '🧼', LIMPIEZA: '🧽', BOTIQUIN: '🩹' };
+let fichaActual = { codigo: '', lista: [] };
+
+function partir(texto, max) {
+  const lineas = []; let l = '';
+  String(texto || '').split(/\s+/).forEach(function (w) {
+    if ((l + ' ' + w).trim().length > max && l) { lineas.push(l); l = w; } else l = (l + ' ' + w).trim();
+  });
+  if (l) lineas.push(l);
+  return lineas.slice(0, 4);
+}
+// Portada simulada cuando no hay foto: color e icono de la categoría y el nombre
+function portadaSimulada(p) {
+  const c = COLOR_CAT[p.categoria] || '#6b736c', ico = ICONO_CAT[p.categoria] || '📦';
+  const lineas = partir(p.nombre || 'Sin nombre', 11);
+  return '<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><rect width="120" height="160" fill="' + c + '"/>' +
+    '<rect x="7" y="7" width="106" height="146" fill="none" stroke="#fff8"/>' +
+    '<text x="60" y="58" text-anchor="middle" font-size="34">' + ico + '</text>' +
+    lineas.map(function (t, i) { return '<text x="60" y="' + (88 + i * 14) + '" text-anchor="middle" font-family="Georgia,serif" font-size="11.5" fill="#fff">' + esc(t) + '</text>'; }).join('') +
+    (p.marca ? '<text x="60" y="146" text-anchor="middle" font-family="Georgia,serif" font-style="italic" font-size="8" fill="#fffc">' + esc(p.marca) + '</text>' : '') + '</svg>';
+}
+
+function listaVisible(sel) {
+  const vistos = [];
+  cada(document.querySelectorAll(sel + ' .prod'), function (d) { if (vistos.indexOf(d.dataset.c) < 0) vistos.push(d.dataset.c); });
+  return vistos;
+}
+
+async function abrirFicha(codigo, lista) {
   pendientesCache = await idb.todos('pendientes');
-  $('b-buscar').value = '';
+  fichaActual = { codigo: codigo, lista: lista && lista.length ? lista : [codigo] };
+  pintarFicha('');
+  $('ficha-sheet').classList.add('on');
+}
+function cerrarFicha() { $('ficha-sheet').classList.remove('on'); }
+function moverFicha(d) {
+  const i = fichaActual.lista.indexOf(fichaActual.codigo) + d;
+  if (i < 0 || i >= fichaActual.lista.length) return;
+  fichaActual.codigo = fichaActual.lista[i];
+  pintarFicha(d > 0 ? 'in-r' : 'in-l');
+}
+
+function pintarFicha(anim) {
+  const c = fichaActual.codigo;
+  const p = catalogo[c] || { codigo: c };
+  const lotes = lotesDe(c);
+  const total = lotes.reduce(function (s, l) { return s + l.stock; }, 0);
+  const sitios = [];
+  lotes.forEach(function (l) { const k = l.almacen + (l.estante ? ' · ' + l.estante : ''); if (sitios.indexOf(k) < 0) sitios.push(k); });
+  const obj = objetivos.find(function (o) { return o.id === p.linea_objetivo; });
+  const foto = fotoDe(c);
+  const contenido = p.contenido ? String(p.contenido).replace('.', ',') + ' ' + (p.unidad || '') : '';
+  const faltas = [!p.nombre ? 'nombre' : '', !p.categoria ? 'categoría' : ''].filter(String);
+
+  $('fs-cuerpo').innerHTML = '<div class="pf ' + (anim || '') + '" style="border-left-color:' + (COLOR_CAT[p.categoria] || 'var(--verde)') + '"><div class="pf-grid">' +
+    '<div class="pf-cov">' + (foto ? '<img src="' + esc(foto) + '" alt="">' : portadaSimulada(p) + '<small>Sin foto</small>') + '</div>' +
+    '<div><div class="pf-loc">' + (sitios.length ? esc(sitios[0]) + (sitios.length > 1 ? ' · +' + (sitios.length - 1) : '') : 'Sin stock') + '</div>' +
+    '<h2>' + esc(p.nombre || '(sin nombre)') + '</h2>' +
+    '<div class="pf-m">' + esc([p.marca, contenido].filter(Boolean).join(' · ')) + '</div>' +
+    '<div class="pf-chips">' + (p.categoria ? '<span class="pf-chip t" style="background:' + (COLOR_CAT[p.categoria] || 'var(--verde)') + ';border-color:transparent">' + (ICONO_CAT[p.categoria] || '') + ' ' + esc(bonito(p.categoria)) + '</span>' : '') +
+    '<span class="pf-chip">' + (p.tipo === 'EQUIPO' ? 'Equipo (no se gasta)' : 'Se consume') + '</span>' +
+    (obj ? '<span class="pf-chip">🎯 ' + esc(obj.descripcion) + '</span>' : '') + '</div>' +
+    '</div></div>' +
+    '<div class="pf-stock"><b>' + total + '</b><span class="muted">unidades en total</span></div>' +
+    (lotes.length ? lotes.map(function (l) {
+      const e = p.tipo === 'EQUIPO' ? '' : estadoCaducidad(l.caducidad);
+      return '<div class="pf-lote"><span>' + esc(l.almacen) + (l.estante ? ' · ' + esc(l.estante) : '') + ' — <b>' + l.stock + '</b></span>' +
+        '<span class="cad ' + (l.caducidad ? e : 'sin') + '">' + (l.caducidad ? esc(l.caducidad.split('-').reverse().join('/')) + (e === 'caducado' ? ' · caducado' : '') : 'sin caducidad') + '</span></div>';
+    }).join('') : '<div class="muted">No queda stock registrado.</div>') +
+    (faltas.length ? '<div class="pf-aviso">⚠️ Falta ' + faltas.join(' y ') + ': pulsa «Editar ficha».</div>' : '') +
+    '<div class="codigo" style="margin-top:8px;font-size:12px">' + (/^INT-/.test(c) ? 'Sin código de barras' : 'Código ' + esc(c)) + '</div></div>';
+
+  const i = fichaActual.lista.indexOf(c), n = fichaActual.lista.length;
+  $('fs-cnt').textContent = n > 1 ? (i + 1) + ' de ' + n : '';
+  $('fs-ant').disabled = i <= 0; $('fs-sig').disabled = i >= n - 1;
+  $('fs-ant').parentNode.classList.toggle('oculto', n < 2);
+  $('fs-salida').disabled = !total;
+  if (!foto) traerMiniatura(c, function () { if (fichaActual.codigo === c && $('ficha-sheet').classList.contains('on')) pintarFicha(''); });
+}
+
+/* ---------- Buscar producto (sin código / etiqueta rota / sin stock) ---------- */
+async function abrirBuscar(texto) {
+  pendientesCache = await idb.todos('pendientes');
+  $('b-buscar').value = typeof texto === 'string' ? texto : '';
   mostrar('buscar');
   pintarBuscar();
 }
@@ -1039,7 +1169,7 @@ function pintarBuscar() {
     if (soloIncompletos) return falta && (!q || normalizar((p.nombre || '') + ' ' + p.codigo).indexOf(q) >= 0);
     const m = p.categoria ? modoDe(p.categoria) : '';
     if (!q && m && m !== modo) return false; // sin búsqueda: solo los del modo actual
-    return !q || normalizar((p.nombre || '') + ' ' + (p.marca || '') + ' ' + p.codigo).indexOf(q) >= 0;
+    return !q || normalizar((p.nombre || '') + ' ' + (p.marca || '') + ' ' + bonito(p.categoria || '')).indexOf(q) >= 0;
   }).sort(function (a, b) {
     const fa = !a.nombre || !a.categoria ? 0 : 1, fb = !b.nombre || !b.categoria ? 0 : 1; // primero los incompletos
     const ia = /^INT-/.test(a.codigo) ? 0 : 1, ib = /^INT-/.test(b.codigo) ? 0 : 1;
@@ -1054,7 +1184,10 @@ function pintarBuscar() {
       (faltas.length ? ' · <span class="pronto">⚠️ falta ' + faltas.join(' y ') + '</span>' : '') + '</div></div>';
   }).join('') : '<p class="muted">' + (soloIncompletos ? '✅ No queda ningún producto por completar.' : (q ? 'No hay productos con ese nombre. Si es nuevo, créalo abajo.' : 'Todavía no hay productos de este modo.')) + '</p>';
   cada($('b-lista').querySelectorAll('.prod'), function (d) {
-    d.onclick = function () { abrirFormulario(d.dataset.c, { editar: true }); };
+    d.onclick = function () {
+      if (soloIncompletos) abrirFormulario(d.dataset.c, { editar: true });
+      else abrirFicha(d.dataset.c, listaVisible('#b-lista'));
+    };
   });
 }
 
@@ -1068,6 +1201,7 @@ async function llamar(metodo, datos) {
     if (metodo === 'GET') {
       const u = new URL(ajustes.url);
       u.searchParams.set('accion', datos.accion);
+      if (datos.codigo) u.searchParams.set('codigo', datos.codigo);
       u.searchParams.set('token', ajustes.token);
       resp = await fetch(u.toString(), { signal: ctrl.signal });
     } else {
@@ -1196,7 +1330,7 @@ async function probarConexion() {
   $('a-resultado').textContent = 'Probando…';
   try {
     const r = await llamar('GET', { accion: 'ping' });
-    $('a-resultado').textContent = '✅ Conexión correcta' + (r.version >= 2.2 ? '' : ' (servidor antiguo: actualiza Codigo.gs a la v2.2)') + '. Pulsa Guardar.';
+    $('a-resultado').textContent = '✅ Conexión correcta' + (r.version >= 2.3 ? '' : ' (servidor antiguo: actualiza Codigo.gs a la v2.3)') + '. Pulsa Guardar.';
   } catch (e) {
     $('a-resultado').textContent = '❌ ' + e.message;
   } finally {
