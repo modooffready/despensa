@@ -148,6 +148,13 @@
   .lista-item.inactivo span { color:#aaa; text-decoration:line-through; }
   .lista-item button { border:0; background:#e6e1d6; border-radius:8px; padding:6px 10px; font-size:14px; }
   .segmentado.peq button { padding:10px 4px; font-size:15px; }
+  .barra { height:8px; background:#ece6d9; border-radius:9px; overflow:hidden; margin-top:6px; }
+  .barra i { display:block; height:100%; border-radius:9px; }
+  .o-cab { cursor:pointer; }
+  .o-linea { border-top:1px solid #f0ebe0; margin-top:10px; padding-top:8px; font-size:15px; }
+  .o-prods { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .o-prod { border:1px solid #e4dccd; background:#faf7f0; border-radius:8px; padding:4px 8px; font-size:13px; text-align:left; margin:2px 4px 2px 0; }
+  #o-texto { white-space:pre-wrap; font-family:inherit; font-size:15px; margin:0; }
 </style>
 </head>
 <body>
@@ -325,10 +332,32 @@
     <div class="fila" style="margin-bottom:8px;gap:6px">
       <button class="chip" id="s-caducan">⏰ Caducan pronto</button>
     </div>
+    <button class="btn btn-sec" id="s-objetivos" style="margin:0 0 8px">🎯 Objetivos y lista de la compra</button>
     <button class="btn btn-sec" id="s-informe" style="margin:0 0 8px">🖨️ Informe para revisar / PDF</button>
     <input id="s-buscar" type="search" placeholder="🔎 Escribe parte del nombre: choco, atún…">
     <div class="muted" id="s-resumen" style="margin:8px 2px"></div>
     <div id="s-lista"></div>
+  </section>
+
+  <!-- OBJETIVOS Y LISTA DE LA COMPRA -->
+  <section id="pantalla-objetivos" class="oculto">
+    <div class="tarjeta">
+      <h2>🎯 Objetivos</h2>
+      <div class="chips" id="o-almacenes" style="margin:6px 0"></div>
+      <div class="muted" id="o-resumen"></div>
+    </div>
+    <div class="segmentado peq" style="margin-bottom:10px">
+      <button id="o-m-categorias" class="activo">Por categoría</button>
+      <button id="o-m-compra">🛒 Lista de la compra</button>
+    </div>
+    <div id="o-avisos" style="margin-bottom:8px"></div>
+    <div id="o-lista"></div>
+    <div id="o-compra" class="oculto">
+      <div class="tarjeta"><pre id="o-texto"></pre></div>
+      <button class="btn btn-principal" id="o-compartir">📤 Compartir (WhatsApp…)</button>
+      <button class="btn btn-sec" id="o-copiar">📋 Copiar</button>
+    </div>
+    <button class="btn btn-sec" id="o-volver">Volver a Stock</button>
   </section>
 
   <!-- REVISIÓN DE RECHAZADOS -->
@@ -419,6 +448,6 @@
 </div>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.7.1"></script>
+<script src="app.js?v=2.8.0"></script>
 </body>
 </html>

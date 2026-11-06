@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.7.1';
+const VERSION = '2.8.0';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -101,6 +101,7 @@ function ponerTrampa() { if (!trampa) { try { history.pushState({ despensa: 1 },
 function volverA(origen) {
   if (origen === 'revision') { mostrar('revision'); pintarRevision(); return; }
   if (origen === 'stock') abrirStock();
+  else if (origen === 'objetivos') abrirObjetivos();
   else if (origen === 'buscar') { mostrar('buscar'); pintarBuscar(); }
   else mostrar('inicio');
 }
@@ -109,7 +110,7 @@ function atras() {
   switch (pantallaActual) {
     case 'inicio': return; // siguiente "atrás": sale de la app
     case 'formulario': volverA(origenFormulario); break;
-    case 'informe': abrirStock(); break;
+    case 'informe': case 'objetivos': abrirStock(); break;
     case 'ajustes':
       if (!ajustes.url || !ajustes.token || !ajustes.usuario) { toast('Rellena y guarda los ajustes primero'); ponerTrampa(); return; }
       mostrar('inicio'); break;
@@ -121,7 +122,7 @@ window.addEventListener('popstate', function () { trampa = false; atras(); });
 function mostrar(nombre) {
   pantallaActual = nombre;
   if (nombre !== 'inicio') ponerTrampa();
-  ['inicio', 'escaner', 'formulario', 'ajustes', 'stock', 'buscar', 'informe', 'revision'].forEach(function (p) {
+  ['inicio', 'escaner', 'formulario', 'ajustes', 'stock', 'buscar', 'informe', 'revision', 'objetivos'].forEach(function (p) {
     $('pantalla-' + p).classList.toggle('oculto', p !== nombre);
   });
   if (nombre !== 'escaner') pararEscaner();
@@ -262,6 +263,12 @@ function enlazarEventos() {
   $('btn-caducidades').onclick = function () { soloCaducan = true; stockGrupo = ''; stockModo = 'TODO'; abrirStock(); };
   $('s-caducan').onclick = function () { soloCaducan = !soloCaducan; pintarStock(); };
   $('s-informe').onclick = abrirInforme;
+  $('s-objetivos').onclick = abrirObjetivos;
+  $('o-volver').onclick = abrirStock;
+  $('o-m-categorias').onclick = function () { objVista.modo = 'categorias'; pintarObjetivos(); };
+  $('o-m-compra').onclick = function () { objVista.modo = 'compra'; pintarObjetivos(); };
+  $('o-compartir').onclick = compartirLista;
+  $('o-copiar').onclick = copiarLista;
   $('i-volver').onclick = abrirStock;
   $('i-imprimir').onclick = function () {
     try { window.print(); } catch (e) { toast('Este navegador no deja imprimir desde la app. Ábrela en Chrome y usa ⋮ → Compartir → Imprimir.', 5000); }
@@ -551,7 +558,7 @@ function codigoInterno() {
 async function abrirFormulario(codigo, opciones_) {
   const op = opciones_ || {};
   // De dónde venimos, para volver allí al guardar, cancelar o pulsar atrás
-  if (['stock', 'buscar', 'inicio'].indexOf(pantallaActual) >= 0) origenFormulario = pantallaActual;
+  if (['stock', 'buscar', 'inicio', 'objetivos'].indexOf(pantallaActual) >= 0) origenFormulario = pantallaActual;
   else if (pantallaActual === 'escaner') origenFormulario = 'inicio';
   pendientesCache = await idb.todos('pendientes');
   const p = catalogo[codigo] || {};
@@ -1471,6 +1478,228 @@ function pintarInforme() {
 }
 
 /* ---------- Buscar producto (sin código / etiqueta rota / sin stock) ---------- */
+/* ---------- Objetivos y lista de la compra (v2.8) ----------
+ * La categoría agrupa; cada línea (TA-xx) se mide en su propia unidad.
+ * Cuenta para una línea: los productos con esa línea en su ficha, o, si la categoría solo
+ * tiene una línea en esa estancia, los productos de la categoría sin línea asignada.
+ * Solo cuenta el stock de la estancia del objetivo. Lo caducado no cuenta; lo que caduca
+ * en 3 meses sí cuenta, con aviso. */
+const objVista = { almacen: '', modo: 'categorias', abiertas: {}, verSinLinea: false };
+const UNIDADES_PESO = { kg: 1, g: 0.001 }, UNIDADES_VOLUMEN = { litros: 1, l: 1, ml: 0.001 };
+
+function numero(v) { const n = Number(String(v == null ? '' : v).replace(',', '.').trim()); return isFinite(n) ? n : NaN; }
+function formatoCant(n) { return (Math.round(n * 100) / 100).toLocaleString('es-ES', { maximumFractionDigits: 2 }); }
+function mismoSitio(almacen, objetivoAlmacen) {
+  return normalizar(almacen) === normalizar(objetivoAlmacen) || enGrupo(almacen, objetivoAlmacen);
+}
+
+// Cuánto aporta un envase de un producto a una línea, o null si no se puede saber (falta el contenido)
+function aportePorEnvase(p, unidadObjetivo) {
+  const uo = normalizar(unidadObjetivo), up = normalizar(p.unidad), c = numero(p.contenido);
+  const tabla = uo in UNIDADES_PESO ? UNIDADES_PESO : uo in UNIDADES_VOLUMEN ? UNIDADES_VOLUMEN : null;
+  if (tabla) return up in tabla && c > 0 ? c * tabla[up] / tabla[uo] : null;
+  // Unidades contables (uds, rollos, paquetes…): un pack de 12 rollos con unidad «rollos» cuenta 12
+  if (up === uo && up !== 'uds' && c > 0) return c;
+  return 1;
+}
+
+function calcularObjetivos(porCodigo, almacen) {
+  const lineas = objetivos.filter(function (o) { return o.id && mismoSitio(o.almacen, almacen); }).map(function (o) {
+    const obj = numero(o.cantidad_objetivo);
+    return { o: o, objetivo: obj > 0 ? obj : 0, tiene: 0, pronto: 0, caducado: 0, sinContenido: [], productos: [] };
+  });
+  const porId = {}, porCat = {};
+  lineas.forEach(function (l) { porId[l.o.id] = l; (porCat[l.o.categoria] = porCat[l.o.categoria] || []).push(l); });
+  const sinLinea = [];
+
+  Object.keys(porCodigo).forEach(function (c) {
+    const lotes = porCodigo[c].filter(function (l) { return mismoSitio(l.almacen, almacen); });
+    if (!lotes.length) return;
+    const p = catalogo[c] || { codigo: c };
+    let linea = porId[p.linea_objetivo], automatica = false;
+    if (!linea) {
+      const cand = porCat[p.categoria] || [];
+      if (cand.length === 1) { linea = cand[0]; automatica = true; }
+    }
+    const envases = lotes.reduce(function (s, l) { return s + l.stock; }, 0);
+    if (!linea) { sinLinea.push({ codigo: c, envases: envases }); return; }
+
+    const equipo = p.tipo === 'EQUIPO';
+    let validos = 0, pronto = 0, caducado = 0;
+    lotes.forEach(function (l) {
+      const e = equipo ? '' : estadoCaducidad(l.caducidad);
+      if (e === 'caducado') caducado += l.stock; else { validos += l.stock; if (e === 'pronto') pronto += l.stock; }
+    });
+    const aporte = aportePorEnvase(p, linea.o.unidad);
+    if (aporte === null) linea.sinContenido.push(c);
+    const cant = aporte === null ? 0 : validos * aporte;
+    linea.tiene += cant;
+    linea.pronto += aporte === null ? 0 : pronto * aporte;
+    linea.caducado += caducado;
+    linea.productos.push({ codigo: c, envases: validos, cantidad: cant, caducado: caducado, pronto: pronto,
+                           automatica: automatica, sinContenido: aporte === null });
+  });
+
+  lineas.forEach(function (l) {
+    l.falta = l.objetivo ? Math.max(0, l.objetivo - l.tiene) : 0;
+    l.completa = l.objetivo > 0 && l.falta < 1e-9;
+    l.avance = l.objetivo ? Math.min(1, l.tiene / l.objetivo) : 0;
+    l.productos.sort(function (a, b) { return b.cantidad - a.cantidad; });
+  });
+  // Categorías en el orden de la lista de Config; las que no estén, al final
+  const orden = categorias();
+  const cats = Object.keys(porCat).sort(function (a, b) {
+    const ia = orden.indexOf(a), ib = orden.indexOf(b);
+    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.localeCompare(b);
+  }).map(function (cat) {
+    const ls = porCat[cat].slice().sort(function (a, b) { return String(a.o.id).localeCompare(String(b.o.id)); });
+    const conObj = ls.filter(function (l) { return l.objetivo > 0; });
+    return { categoria: cat, lineas: ls, conObjetivo: conObj.length,
+             completas: conObj.filter(function (l) { return l.completa; }).length,
+             avance: conObj.length ? conObj.reduce(function (s, l) { return s + l.avance; }, 0) / conObj.length : 0,
+             sinLinea: sinLinea.filter(function (x) { return (catalogo[x.codigo] || {}).categoria === cat; }) };
+  });
+  return { lineas: lineas, categorias: cats, sinLinea: sinLinea };
+}
+
+function textoListaCompra(r, almacen) {
+  const partes = [];
+  r.categorias.forEach(function (c) {
+    const faltan = c.lineas.filter(function (l) { return l.objetivo > 0 && !l.completa; });
+    if (!faltan.length) return;
+    partes.push((partes.length ? '\n' : '') + '*' + bonito(c.categoria) + '*');
+    faltan.forEach(function (l) {
+      partes.push('- ' + l.o.descripcion + ': faltan ' + formatoCant(l.falta) + ' ' + l.o.unidad +
+        ' (hay ' + formatoCant(l.tiene) + ' de ' + formatoCant(l.objetivo) + ')');
+    });
+  });
+  if (!partes.length) return '';
+  return '🛒 Lista de la compra · ' + almacen + '\n' + new Date().toLocaleDateString('es-ES') + '\n\n' + partes.join('\n');
+}
+
+function almacenesObjetivos() {
+  const v = [];
+  objetivos.forEach(function (o) { if (o.almacen && v.indexOf(o.almacen) < 0) v.push(o.almacen); });
+  return v;
+}
+
+async function abrirObjetivos() {
+  pendientesCache = await idb.todos('pendientes');
+  const alms = almacenesObjetivos();
+  if (alms.indexOf(objVista.almacen) < 0) {
+    objVista.almacen = alms.find(function (a) { return enGrupo(a, grupoActual()) || normalizar(grupoDe(a)) === normalizar(grupoActual()); }) || alms[0] || '';
+  }
+  mostrar('objetivos');
+  pintarObjetivos();
+}
+
+function colorAvance(a) { return a >= 1 ? '#2e9d4b' : a >= 0.5 ? '#e0a43a' : '#c0573e'; }
+function barra(a) { return '<div class="barra"><i style="width:' + Math.round(a * 100) + '%;background:' + colorAvance(a) + '"></i></div>'; }
+
+function pintarObjetivos() {
+  const alms = almacenesObjetivos();
+  $('o-almacenes').innerHTML = alms.length > 1 ? alms.map(function (a) {
+    return '<button class="chip' + (a === objVista.almacen ? ' activo' : '') + '" data-a="' + esc(a) + '">' + esc(a) + '</button>';
+  }).join('') : '';
+  cada($('o-almacenes').children, function (b) { b.onclick = function () { objVista.almacen = b.dataset.a; pintarObjetivos(); }; });
+  ['categorias', 'compra'].forEach(function (m) { $('o-m-' + m).classList.toggle('activo', objVista.modo === m); });
+
+  if (!objetivos.length) {
+    $('o-resumen').textContent = 'No hay objetivos descargados. Rellena la pestaña Objetivos de la hoja y sincroniza.';
+    $('o-lista').innerHTML = ''; $('o-compra').classList.add('oculto'); $('o-avisos').innerHTML = '';
+    return;
+  }
+  const r = calcularObjetivos(lotesTodos(pendientesCache), objVista.almacen);
+  const conObj = r.lineas.filter(function (l) { return l.objetivo > 0; });
+  const completas = conObj.filter(function (l) { return l.completa; }).length;
+  const sinCant = r.lineas.length - conObj.length;
+  $('o-resumen').innerHTML = '<b>' + esc(objVista.almacen) + '</b> · ' + completas + ' de ' + conObj.length + ' líneas completas' +
+    (sinCant ? ' · ' + sinCant + ' sin cantidad decidida' : '') +
+    '<br><span style="font-size:13px">Solo cuenta lo guardado aquí. Lo caducado no cuenta.</span>';
+
+  // Avisos: productos con stock aquí que no cuentan para ninguna línea
+  const n = r.sinLinea.length;
+  let av = '';
+  if (n) {
+    av = '<button class="chip" id="o-ver-sin">⚠️ ' + n + (n === 1 ? ' producto no cuenta' : ' productos no cuentan') +
+      ' para ningún objetivo · ' + (objVista.verSinLinea ? 'Ocultar' : 'Ver') + '</button>';
+    if (objVista.verSinLinea) {
+      av += '<div class="tarjeta" style="margin-top:8px"><p class="muted" style="margin-top:0">Su categoría tiene varias líneas: toca cada uno y elige su «Línea de objetivo» en la ficha.</p>' +
+        r.sinLinea.map(function (x) {
+          const p = catalogo[x.codigo] || {};
+          return '<div class="lista-item o-editar" data-c="' + esc(x.codigo) + '"><span>' + esc(p.nombre || x.codigo) +
+            ' <span class="muted">· ' + esc(p.categoria ? bonito(p.categoria) : 'sin categoría') + ' · ' + x.envases + ' uds</span></span><button>Asignar</button></div>';
+        }).join('') + '</div>';
+    }
+  }
+  $('o-avisos').innerHTML = av;
+  if ($('o-ver-sin')) $('o-ver-sin').onclick = function () { objVista.verSinLinea = !objVista.verSinLinea; pintarObjetivos(); };
+
+  if (objVista.modo === 'compra') {
+    const t = textoListaCompra(r, objVista.almacen);
+    $('o-lista').innerHTML = '';
+    $('o-compra').classList.remove('oculto');
+    $('o-texto').textContent = t || '✅ No falta nada: todas las líneas con cantidad están completas.';
+    $('o-compartir').disabled = !t; $('o-copiar').disabled = !t;
+  } else {
+    $('o-compra').classList.add('oculto');
+    $('o-lista').innerHTML = r.categorias.map(function (c) {
+      const abierta = !!objVista.abiertas[c.categoria];
+      let h = '<div class="prod o-cat" style="border-left:5px solid ' + (COLOR_CAT[c.categoria] || 'var(--verde)') + '">' +
+        '<div class="prod-cab o-cab" data-cat="' + esc(c.categoria) + '"><span>' + (ICONO_CAT[c.categoria] || '') + ' ' + esc(bonito(c.categoria)) + '</span>' +
+        '<span class="muted">' + (c.conObjetivo ? c.completas + '/' + c.conObjetivo : 'sin cantidad') + ' ' + (abierta ? '▴' : '▾') + '</span></div>' +
+        (c.conObjetivo ? barra(c.avance) : '');
+      if (c.sinLinea.length) h += '<div class="lote pronto">⚠️ ' + c.sinLinea.length + ' sin línea asignada</div>';
+      if (abierta) {
+        h += c.lineas.map(function (l) {
+          const avisos = [];
+          if (l.pronto > 0) avisos.push('<span class="pronto">⏰ ' + formatoCant(l.pronto) + ' caducan en 3 meses</span>');
+          if (l.caducado > 0) avisos.push('<span class="caducado">' + l.caducado + ' envases caducados (no cuentan)</span>');
+          if (l.sinContenido.length) avisos.push('<span class="pronto">⚠️ ' + l.sinContenido.length + ' sin contenido por envase (no cuentan)</span>');
+          return '<div class="o-linea"><div class="prod-cab" style="font-weight:500"><span>' + esc(l.o.descripcion) + '</span>' +
+            '<span style="white-space:nowrap">' + (l.objetivo ? '<b>' + formatoCant(l.tiene) + '</b> / ' + formatoCant(l.objetivo) : '<span class="muted">sin cantidad</span>') +
+            ' <span class="muted">' + esc(l.o.unidad) + '</span></span></div>' + (l.objetivo ? barra(l.avance) : '') +
+            (avisos.length ? '<div class="lote">' + avisos.join(' · ') + '</div>' : '') +
+            (l.productos.length ? '<div class="o-prods">' + l.productos.map(function (x) {
+              const p = catalogo[x.codigo] || {};
+              return '<button class="o-prod" data-c="' + esc(x.codigo) + '">' + esc(p.nombre || x.codigo) + ' · ' +
+                (x.sinContenido ? '<span class="pronto">falta contenido</span>' : x.envases + ' env.' +
+                  (normalizar(l.o.unidad) !== 'uds' && x.cantidad !== x.envases ? ' = ' + formatoCant(x.cantidad) + ' ' + esc(l.o.unidad) : '')) +
+                (x.automatica ? ' <span class="muted">(por categoría)</span>' : '') + '</button>';
+            }).join('') + '</div>' : '<div class="lote">Nada guardado todavía.</div>') + '</div>';
+        }).join('');
+        if (c.sinLinea.length) h += '<div class="lote">Sin línea: ' + c.sinLinea.map(function (x) {
+          return '<button class="o-prod o-editar" data-c="' + esc(x.codigo) + '">' + esc((catalogo[x.codigo] || {}).nombre || x.codigo) + ' · asignar</button>';
+        }).join('') + '</div>';
+      }
+      return h + '</div>';
+    }).join('');
+  }
+
+  cada($('o-lista').querySelectorAll('.o-cab'), function (d) {
+    d.onclick = function () { const k = d.dataset.cat; objVista.abiertas[k] = !objVista.abiertas[k]; pintarObjetivos(); };
+  });
+  cada(document.querySelectorAll('#pantalla-objetivos .o-prod:not(.o-editar)'), function (b) {
+    b.onclick = function (ev) { ev.stopPropagation(); abrirFicha(b.dataset.c, [b.dataset.c]); };
+  });
+  cada(document.querySelectorAll('#pantalla-objetivos .o-editar'), function (b) {
+    b.onclick = function (ev) { ev.stopPropagation(); abrirFormulario(b.dataset.c, { editar: true }); };
+  });
+}
+
+async function compartirLista() {
+  const t = $('o-texto').textContent;
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Lista de la compra', text: t }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank');
+}
+async function copiarLista() {
+  try { await navigator.clipboard.writeText($('o-texto').textContent); toast('Lista copiada'); }
+  catch (e) { toast('No se pudo copiar: mantén pulsado el texto y cópialo a mano', 4000); }
+}
+
 async function abrirBuscar(texto) {
   pendientesCache = await idb.todos('pendientes');
   $('b-buscar').value = typeof texto === 'string' ? texto : '';
