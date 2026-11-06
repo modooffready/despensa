@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.4.0';
+const VERSION = '2.4.1';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -68,6 +68,7 @@ let vistaStock = 'producto';
 let tipoLista = 'CATEGORIA';
 let stockFiltrado = true;
 let resincronizar = false;
+let soloIncompletos = false;
 let ignorarCodigo = '', ignorarHasta = 0; // evita releer el producto anterior en la ráfaga
 
 const $ = function (id) { return document.getElementById(id); };
@@ -188,7 +189,9 @@ function enlazarEventos() {
   $('btn-sincronizar').onclick = function () { sincronizar(true); };
   $('btn-escanear').onclick = abrirEscaner;
   $('btn-stock').onclick = abrirStock;
-  $('btn-buscar').onclick = abrirBuscar;
+  $('btn-buscar').onclick = function () { soloIncompletos = false; abrirBuscar(); };
+  $('btn-incompletos').onclick = function () { soloIncompletos = true; abrirBuscar(); };
+  $('b-solo-incompletos').onclick = function () { soloIncompletos = !soloIncompletos; pintarBuscar(); };
   $('b-buscar').oninput = pintarBuscar;
   $('b-nuevo').onclick = function () { abrirFormulario(codigoInterno(), { sinCodigo: true, nombre: $('b-buscar').value.trim() }); };
   $('b-volver').onclick = function () { mostrar('inicio'); };
@@ -264,6 +267,15 @@ async function refrescarEstado() {
     ? 'Última sincronización: ' + new Date(ajustes.ultimaSync).toLocaleString('es-ES')
     : 'Nunca sincronizado';
   $('txt-error').textContent = ultimoError ? 'Último error: ' + ultimoError : '';
+  const n = incompletos().length;
+  $('btn-incompletos').classList.toggle('oculto', !n);
+  $('btn-incompletos').textContent = '⚠️ ' + n + (n === 1 ? ' producto' : ' productos') + ' sin nombre o sin categoría · Completar';
+}
+
+// Productos a los que les falta el nombre o la categoría (p. ej. no estaban en Open Food Facts)
+function incompletos() {
+  return Object.keys(catalogo).map(function (c) { return catalogo[c]; })
+    .filter(function (p) { return p && (!p.nombre || !p.categoria); });
 }
 
 function nombreDe(codigo) {
@@ -386,7 +398,7 @@ async function abrirFormulario(codigo, opciones_) {
   const p = catalogo[codigo] || {};
   actual = { codigo: codigo, existe: !!catalogo[codigo], sinCodigo: !!op.sinCodigo || /^INT-/.test(codigo),
              tipoProducto: p.tipo || 'CONSUMIBLE', categoria: p.categoria || '', fotoUrl: '',
-             offTags: [], catSugerida: false, lineaTocada: !!p.linea_objetivo, verTodasLineas: false };
+             offTags: [], catSugerida: false, lineaTocada: !!p.linea_objetivo, verTodasLineas: false, desdeBuscar: !!op.editar };
 
   pintarCabeceraProducto();
   $('f-codigo').textContent = actual.sinCodigo ? 'Sin código de barras (' + codigo + ')' : codigo;
@@ -399,7 +411,7 @@ async function abrirFormulario(codigo, opciones_) {
   pintarCategoriasFicha();
   ponerTipoProducto(actual.tipoProducto);
   const incompleta = !p.nombre || !p.categoria;
-  $('f-ficha').classList.toggle('oculto', !incompleta);
+  $('f-ficha').classList.toggle('oculto', !incompleta && !op.editar);
 
   // Movimiento
   $('f-cantidad').value = 1;
@@ -842,7 +854,7 @@ async function guardarFicha() {
 async function guardarSoloFicha() {
   if (!(await guardarFicha())) return;
   toast('Ficha guardada: ' + nombreDe(actual.codigo));
-  mostrar('inicio');
+  if (actual.desdeBuscar) { mostrar('buscar'); pintarBuscar(); } else mostrar('inicio');
   await refrescarEstado();
   sincronizar(false);
 }
@@ -1019,23 +1031,28 @@ function pintarBuscar() {
   const q = normalizar($('b-buscar').value);
   const porCodigo = lotesTodos(pendientesCache);
   const modo = modoActual();
+  $('b-solo-incompletos').classList.toggle('activo', soloIncompletos);
   const lista = Object.keys(catalogo).map(function (c) { return catalogo[c]; }).filter(function (p) {
-    if (!p.nombre) return false;
+    const falta = !p.nombre || !p.categoria;
+    if (soloIncompletos) return falta && (!q || normalizar((p.nombre || '') + ' ' + p.codigo).indexOf(q) >= 0);
     const m = p.categoria ? modoDe(p.categoria) : '';
     if (!q && m && m !== modo) return false; // sin búsqueda: solo los del modo actual
-    return !q || normalizar(p.nombre + ' ' + (p.marca || '') + ' ' + p.codigo).indexOf(q) >= 0;
+    return !q || normalizar((p.nombre || '') + ' ' + (p.marca || '') + ' ' + p.codigo).indexOf(q) >= 0;
   }).sort(function (a, b) {
-    const ia = /^INT-/.test(a.codigo) ? 0 : 1, ib = /^INT-/.test(b.codigo) ? 0 : 1; // primero los sin código
-    return ia - ib || a.nombre.localeCompare(b.nombre, 'es');
-  }).slice(0, 60);
+    const fa = !a.nombre || !a.categoria ? 0 : 1, fb = !b.nombre || !b.categoria ? 0 : 1; // primero los incompletos
+    const ia = /^INT-/.test(a.codigo) ? 0 : 1, ib = /^INT-/.test(b.codigo) ? 0 : 1;
+    return fa - fb || ia - ib || (a.nombre || '').localeCompare(b.nombre || '', 'es');
+  }).slice(0, 80);
   $('b-lista').innerHTML = lista.length ? lista.map(function (p) {
     const total = (porCodigo[p.codigo] || []).reduce(function (s, l) { return s + l.stock; }, 0);
-    return '<div class="prod" data-c="' + esc(p.codigo) + '"><div class="prod-cab"><span>' + esc(p.nombre) +
+    const faltas = [!p.nombre ? 'nombre' : '', !p.categoria ? 'categoría' : ''].filter(String);
+    return '<div class="prod" data-c="' + esc(p.codigo) + '"><div class="prod-cab"><span>' + esc(p.nombre || '(sin nombre)') +
       (p.marca ? ' <span class="muted">· ' + esc(p.marca) + '</span>' : '') + '</span><span class="prod-total">' + total + '</span></div>' +
-      '<div class="lote">' + (/^INT-/.test(p.codigo) ? 'Sin código de barras' : esc(p.codigo)) + (p.categoria ? ' · ' + esc(bonito(p.categoria)) : '') + '</div></div>';
-  }).join('') : '<p class="muted">' + (q ? 'No hay productos con ese nombre. Si es nuevo, créalo abajo.' : 'Todavía no hay productos de este modo.') + '</p>';
+      '<div class="lote">' + (/^INT-/.test(p.codigo) ? 'Sin código de barras' : esc(p.codigo)) + (p.categoria ? ' · ' + esc(bonito(p.categoria)) : '') +
+      (faltas.length ? ' · <span class="pronto">⚠️ falta ' + faltas.join(' y ') + '</span>' : '') + '</div></div>';
+  }).join('') : '<p class="muted">' + (soloIncompletos ? '✅ No queda ningún producto por completar.' : (q ? 'No hay productos con ese nombre. Si es nuevo, créalo abajo.' : 'Todavía no hay productos de este modo.')) + '</p>';
   cada($('b-lista').querySelectorAll('.prod'), function (d) {
-    d.onclick = function () { abrirFormulario(d.dataset.c); };
+    d.onclick = function () { abrirFormulario(d.dataset.c, { editar: true }); };
   });
 }
 

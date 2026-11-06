@@ -102,6 +102,7 @@
       </div>
     </div>
 
+    <button class="btn btn-sec oculto" id="btn-incompletos" style="background:#f6e7c8;color:#7a5410"></button>
     <button class="btn btn-principal" id="btn-escanear">📷 Escanear</button>
     <div class="fila">
       <button class="btn btn-sec" id="btn-stock">📦 Ver stock</button>
@@ -211,6 +212,7 @@
   <section id="pantalla-buscar" class="oculto">
     <p class="muted" style="margin-top:0">Para productos sin código de barras, con la etiqueta rota o que ya no tienen stock.</p>
     <input id="b-buscar" placeholder="🔎 Nombre, marca o código">
+    <button class="chip" id="b-solo-incompletos" style="margin-top:8px">⚠️ Ver solo los que faltan por completar</button>
     <div id="b-lista" style="margin-top:10px"></div>
     <button class="btn btn-principal" id="b-nuevo">➕ Crear artículo sin código</button>
     <button class="btn btn-sec" id="b-volver">Volver</button>
@@ -277,6 +279,6 @@
 </main>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.4.0"></script>
+<script src="app.js?v=2.4.1"></script>
 </body>
 </html>
