@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.8.0';
+const VERSION = '2.8.1';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -267,7 +267,8 @@ function enlazarEventos() {
   $('o-volver').onclick = abrirStock;
   $('o-m-categorias').onclick = function () { objVista.modo = 'categorias'; pintarObjetivos(); };
   $('o-m-compra').onclick = function () { objVista.modo = 'compra'; pintarObjetivos(); };
-  $('o-compartir').onclick = compartirLista;
+  $('o-compartir').onclick = function () { compartirLista(false); };
+  $('o-keep').onclick = function () { compartirLista(true); };
   $('o-copiar').onclick = copiarLista;
   $('i-volver').onclick = abrirStock;
   $('i-imprimir').onclick = function () {
@@ -1577,6 +1578,17 @@ function textoListaCompra(r, almacen) {
   return '🛒 Lista de la compra · ' + almacen + '\n' + new Date().toLocaleDateString('es-ES') + '\n\n' + partes.join('\n');
 }
 
+// Una línea por artículo, sin cabeceras: en Keep cada línea pasa a ser una casilla para marcar
+function textoListaMarcar(r) {
+  const filas = [];
+  r.categorias.forEach(function (c) {
+    c.lineas.forEach(function (l) {
+      if (l.objetivo > 0 && !l.completa) filas.push(l.o.descripcion + ' — ' + formatoCant(l.falta) + ' ' + l.o.unidad);
+    });
+  });
+  return filas.join('\n');
+}
+
 function almacenesObjetivos() {
   const v = [];
   objetivos.forEach(function (o) { if (o.almacen && v.indexOf(o.almacen) < 0) v.push(o.almacen); });
@@ -1640,7 +1652,8 @@ function pintarObjetivos() {
     $('o-lista').innerHTML = '';
     $('o-compra').classList.remove('oculto');
     $('o-texto').textContent = t || '✅ No falta nada: todas las líneas con cantidad están completas.';
-    $('o-compartir').disabled = !t; $('o-copiar').disabled = !t;
+    objVista.textoMarcar = textoListaMarcar(r);
+    $('o-compartir').disabled = !t; $('o-copiar').disabled = !t; $('o-keep').disabled = !t;
   } else {
     $('o-compra').classList.add('oculto');
     $('o-lista').innerHTML = r.categorias.map(function (c) {
@@ -1687,16 +1700,19 @@ function pintarObjetivos() {
   });
 }
 
-async function compartirLista() {
-  const t = $('o-texto').textContent;
+async function compartirLista(paraMarcar) {
+  const t = paraMarcar ? objVista.textoMarcar : $('o-texto').textContent;
+  const titulo = 'Compra ' + objVista.almacen + ' ' + new Date().toLocaleDateString('es-ES');
   if (navigator.share) {
-    try { await navigator.share({ title: 'Lista de la compra', text: t }); return; }
+    try { await navigator.share({ title: titulo, text: t }); if (paraMarcar) toast('En Keep: pulsa ⊞ abajo a la izquierda → Casillas de verificación', 6000); return; }
     catch (e) { if (e && e.name === 'AbortError') return; }
   }
+  if (paraMarcar) { copiarTexto(t); return; }
   window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank');
 }
-async function copiarLista() {
-  try { await navigator.clipboard.writeText($('o-texto').textContent); toast('Lista copiada'); }
+async function copiarLista() { copiarTexto($('o-texto').textContent); }
+async function copiarTexto(t) {
+  try { await navigator.clipboard.writeText(t); toast('Lista copiada'); }
   catch (e) { toast('No se pudo copiar: mantén pulsado el texto y cópialo a mano', 4000); }
 }
 

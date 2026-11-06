@@ -100,6 +100,9 @@ test('pantalla Objetivos: avance por línea y lista de la compra', async functio
     assert.match(lista, /Leche UHT: faltan 14 litros/);
     assert.match(lista, /Frutos secos: faltan 0,5 kg/);
     assert.doesNotMatch(lista, /Abrelatas|Medicación/);
+    const marcar = await p.evaluate(function () { return objVista.textoMarcar; });
+    assert.match(marcar, /^Agua embotellada, garrafa 6,25 L — 12 uds$/m);
+    assert.doesNotMatch(marcar, /\*|Bebida|Lista de la compra/);
     // Asignar línea desde Objetivos abre la ficha y vuelve a Objetivos
     await p.click('#o-m-categorias');
     await p.click('.o-editar[data-c="S"]');
