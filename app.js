@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.4.6';
+const VERSION = '2.4.7';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -191,6 +191,11 @@ function opcionesConValor(select, lista, valor, vacia) {
 
 function enlazarEventos() {
   $('btn-ajustes').onclick = abrirAjustes;
+  $('h-sync').onclick = function () {
+    toast((ajustes.ultimaSync ? 'Última sincronización: ' + new Date(ajustes.ultimaSync).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Nunca sincronizado') +
+      (ultimoError ? ' · Error: ' + ultimoError : ''), 3500);
+    sincronizar(true);
+  };
   $('fs-cerrar').onclick = cerrarFicha;
   $('ficha-sheet').onclick = function (e) { if (e.target === $('ficha-sheet')) cerrarFicha(); };
   $('fs-ant').onclick = function () { moverFicha(-1); };
@@ -225,7 +230,7 @@ function enlazarEventos() {
   // un número largo → se trata como código de barras escrito a mano
   function buscarDesdeInicio() {
     const t = $('codigo-manual').value.trim();
-    if (!t) { toast('Escribe parte del nombre'); return; }
+    if (!t) { soloIncompletos = false; abrirBuscar(''); return; }
     $('codigo-manual').value = '';
     if (/^[\d\s-]{8,}$/.test(t)) { abrirFormulario(normalizarCodigo(t)); return; }
     soloIncompletos = false;
@@ -309,6 +314,12 @@ async function refrescarEstado() {
     ? 'Última sincronización: ' + new Date(ajustes.ultimaSync).toLocaleString('es-ES')
     : 'Nunca sincronizado';
   $('txt-error').textContent = ultimoError ? 'Último error: ' + ultimoError : '';
+  // Pastilla de la cabecera; la tarjeta grande solo aparece si hay un error
+  const total = pend.length + nFichas + nFotos;
+  const pas = $('h-sync');
+  pas.className = 'pastilla' + (ultimoError ? ' err' : (!online ? ' off' : (total ? ' pend' : '')));
+  pas.textContent = sincronizando ? '🔄 Sincronizando' : ultimoError ? '⚠️ Error' : !online ? (total ? '📴 ' + total + ' pendientes' : '📴 Sin conexión') : total ? '⏳ ' + total + ' pendientes' : '✓ Al día';
+  $('tarjeta-sync').classList.toggle('oculto', !ultimoError);
   const n = incompletos().length;
   $('btn-incompletos').classList.toggle('oculto', !n);
   $('btn-incompletos').textContent = '⚠️ ' + n + (n === 1 ? ' producto' : ' productos') + ' sin nombre o sin categoría · Completar';
