@@ -79,7 +79,7 @@
   .pf { border-left:5px solid var(--verde); border-radius:12px; background:#fff; padding:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
   .pf-grid { display:grid; grid-template-columns:110px minmax(0,1fr); gap:14px; align-items:start; }
   .pf-grid > div { min-width:0; overflow-wrap:anywhere; }
-  .pf-cov img, .pf-cov svg { width:110px; height:auto; aspect-ratio:3/4; object-fit:cover; display:block; border-radius:6px; box-shadow:0 6px 16px #0003, 0 1px 3px #0003; background:#f4f1ea; }
+  .pf-cov img, .pf-cov svg { width:110px; height:110px; object-fit:contain; display:block; border-radius:8px; box-shadow:0 6px 16px #0003, 0 1px 3px #0003; background:#fff; }
   .pf-cov small { display:block; font-size:10.5px; color:var(--gris); text-align:center; margin-top:6px; }
   .pf-loc { font-size:12.5px; color:var(--verde); font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
   .pf h2 { font-family:Georgia, 'Times New Roman', serif; font-size:23px; line-height:1.2; margin:6px 0 2px; }
@@ -170,7 +170,7 @@
       <h2 id="f-nombre">Producto</h2>
       <div class="codigo" id="f-codigo"></div>
       <div id="f-etiquetas"></div>
-      <img id="f-foto" class="oculto" alt="" style="max-height:130px;max-width:100%;border-radius:8px;margin-top:8px">
+      <img id="f-foto" class="oculto" alt="" style="width:110px;height:110px;object-fit:contain;background:#fff;border:1px solid #e4dccd;border-radius:8px;margin-top:8px;display:block">
       <div class="muted" id="f-off"></div>
       <div class="muted" id="f-stock"></div>
       <button class="enlace" id="f-editar">✏️ Editar ficha del producto</button>
@@ -332,6 +332,6 @@
 </div>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.4.4"></script>
+<script src="app.js?v=2.4.5"></script>
 </body>
 </html>

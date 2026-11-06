@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.4.4';
+const VERSION = '2.4.5';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -1094,12 +1094,12 @@ function partir(texto, max) {
 // Portada simulada cuando no hay foto: color e icono de la categoría y el nombre
 function portadaSimulada(p) {
   const c = COLOR_CAT[p.categoria] || '#6b736c', ico = ICONO_CAT[p.categoria] || '📦';
-  const lineas = partir(p.nombre || 'Sin nombre', 11);
-  return '<svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg"><rect width="120" height="160" fill="' + c + '"/>' +
-    '<rect x="7" y="7" width="106" height="146" fill="none" stroke="#fff8"/>' +
-    '<text x="60" y="58" text-anchor="middle" font-size="34">' + ico + '</text>' +
-    lineas.map(function (t, i) { return '<text x="60" y="' + (88 + i * 14) + '" text-anchor="middle" font-family="Georgia,serif" font-size="11.5" fill="#fff">' + esc(t) + '</text>'; }).join('') +
-    (p.marca ? '<text x="60" y="146" text-anchor="middle" font-family="Georgia,serif" font-style="italic" font-size="8" fill="#fffc">' + esc(p.marca) + '</text>' : '') + '</svg>';
+  const lineas = partir(p.nombre || 'Sin nombre', 13).slice(0, 3);
+  return '<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"><rect width="120" height="120" fill="' + c + '"/>' +
+    '<rect x="6" y="6" width="108" height="108" fill="none" stroke="#fff8"/>' +
+    '<text x="60" y="44" text-anchor="middle" font-size="28">' + ico + '</text>' +
+    lineas.map(function (t, i) { return '<text x="60" y="' + (66 + i * 13) + '" text-anchor="middle" font-family="Georgia,serif" font-size="11" fill="#fff">' + esc(t) + '</text>'; }).join('') +
+    (p.marca && lineas.length < 3 ? '<text x="60" y="106" text-anchor="middle" font-family="Georgia,serif" font-style="italic" font-size="8" fill="#fffc">' + esc(p.marca) + '</text>' : '') + '</svg>';
 }
 
 function listaVisible(sel) {
