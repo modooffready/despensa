@@ -63,6 +63,11 @@
   .caducado { color:var(--rojo); font-weight:700; }
   .pronto { color:#a86a00; font-weight:700; }
   .codigo { font-family:monospace; color:var(--gris); }
+  .contexto { padding:8px; }
+  .c-grupos { display:flex; gap:4px; margin-bottom:6px; }
+  .c-grupos button { flex:1 1 0; min-width:0; border:1px solid var(--verde); background:#fff; color:var(--verde); border-radius:10px; padding:9px 2px; font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .c-grupos button.activo { background:var(--verde); color:#fff; }
+  .contexto .segmentado button { padding:8px 4px; font-size:15px; }
   /* ---- Ficha de producto (estilo biblioteca) ---- */
   .sheet { position:fixed; inset:0; background:#0006; display:flex; align-items:flex-end; justify-content:center; opacity:0; pointer-events:none; transition:opacity .2s; z-index:30; }
   .sheet.on { opacity:1; pointer-events:auto; }
@@ -124,12 +129,10 @@
       <button class="btn btn-sec" id="btn-sincronizar">🔄 Sincronizar ahora</button>
     </div>
 
-    <div class="tarjeta">
-      <label style="margin-top:0">📍 Dónde estás</label>
-      <div class="chips" id="c-grupos"></div>
-      <label>Qué vas a meter o sacar</label>
-      <div class="segmentado peq">
-        <button id="c-DESPENSA">🥫 Despensa (comida)</button>
+    <div class="tarjeta contexto">
+      <div id="c-grupos" class="c-grupos" aria-label="Dónde estás"></div>
+      <div class="segmentado peq" aria-label="Qué vas a meter o sacar">
+        <button id="c-DESPENSA">🥫 Despensa</button>
         <button id="c-MATERIAL">🧰 Material</button>
       </div>
     </div>
@@ -329,6 +332,6 @@
 </div>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.4.3"></script>
+<script src="app.js?v=2.4.4"></script>
 </body>
 </html>

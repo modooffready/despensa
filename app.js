@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.4.3';
+const VERSION = '2.4.4';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -270,10 +270,19 @@ function enlazarEventos() {
 }
 
 /* ---------- Dónde estás / qué metes ---------- */
+// Nombre corto para los botones: "Trastero Ávila" → "Trastero", "Peugeot 5008" → "5008", "Mazda 3" se queda igual
+function nombreCorto(g) {
+  const w = String(g).split(/\s+/);
+  if (w.length < 2) return g;
+  const ult = w[w.length - 1];
+  if (/^\d{3,}$/.test(ult)) return ult;
+  if (/^\d{1,2}$/.test(ult)) return g;
+  return w[0];
+}
 function pintarContexto() {
   const g = grupoActual();
   $('c-grupos').innerHTML = grupos().map(function (x) {
-    return '<button class="chip' + (x === g ? ' activo' : '') + '" data-g="' + esc(x) + '">' + esc(x) + '</button>';
+    return '<button class="' + (x === g ? 'activo' : '') + '" data-g="' + esc(x) + '" title="' + esc(x) + '">' + esc(nombreCorto(x)) + '</button>';
   }).join('');
   cada($('c-grupos').children, function (b) {
     b.onclick = async function () { ajustes.grupo = b.dataset.g; await guardarAjustesLocales(); pintarContexto(); };
