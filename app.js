@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.9.1';
+const VERSION = '2.9.2';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -60,6 +60,7 @@ let objetivos = [];      // [{id, categoria, descripcion, almacen, …}]
 let prodPend = {};       // cambios de fichas de producto aún no enviados
 let fotosPend = {};      // codigo -> foto (dataURL) aún no subida
 let revision = [];       // movimientos rechazados por el servidor: [{mov, motivo, fecha}]
+let offIntentados = {};  // codigo -> fecha del último intento de completar con Open Food Facts
 let miniaturas = {};     // codigo -> foto pequeña guardada en el móvil (para verla siempre)
 let sincronizando = false;
 let ultimoError = '';
@@ -182,6 +183,7 @@ async function iniciar() {
   prodPend = (await idb.get('kv', 'prodPend')) || {};
   fotosPend = (await idb.get('kv', 'fotosPend')) || {};
   revision = (await idb.get('kv', 'revision')) || [];
+  offIntentados = (await idb.get('kv', 'offIntentados')) || {};
   miniaturas = (await idb.get('kv', 'miniaturas')) || {};
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
@@ -763,6 +765,53 @@ async function consultarOFF(codigo) {
   } finally {
     clearTimeout(t);
   }
+}
+
+// Productos con código de barras que siguen sin nombre (escaneados sin red, o el servidor no llegó
+// a buscarlos: solo consulta 5 por envío). Se buscan desde el móvil, como máximo 10 por vez y cada
+// código una vez por semana. Solo rellena lo vacío; lo encontrado se envía como cambio de ficha.
+async function completarDesdeOFF() {
+  if (!navigator.onLine) return false;
+  const semana = 7 * 24 * 3600 * 1000, ahora = Date.now();
+  const codigos = Object.keys(catalogo).filter(function (c) {
+    const p = catalogo[c] || {};
+    return !p.nombre && /^\d{8,14}$/.test(c) && !(offIntentados[c] && ahora - new Date(offIntentados[c]).getTime() < semana);
+  }).slice(0, 10);
+  let encontrados = 0;
+  for (const c of codigos) {
+    offIntentados[c] = new Date().toISOString();
+    const ctrl = new AbortController();
+    const t = setTimeout(function () { ctrl.abort(); }, 8000);
+    try {
+      const url = 'https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(c) +
+        '.json?fields=product_name,product_name_es,brands,product_quantity,product_quantity_unit,image_front_small_url';
+      const r = await fetch(url, { signal: ctrl.signal });
+      const j = r.ok ? await r.json() : null;
+      const prod = j && j.status === 1 ? j.product : null;
+      const nombre = prod ? String(prod.product_name_es || prod.product_name || '').trim() : '';
+      if (!nombre) continue;
+      const p = catalogo[c] || {};
+      const cambios = { nombre: nombre.slice(0, 120) };
+      const marca = String(prod.brands || '').split(',')[0].trim();
+      if (!p.marca && marca) cambios.marca = marca.slice(0, 60);
+      const cont = convertirCantidad(prod.product_quantity, prod.product_quantity_unit);
+      if (!p.contenido && cont.contenido) { cambios.contenido = cont.contenido; cambios.unidad = cont.unidad; }
+      if (!p.foto_url && prod.image_front_small_url) cambios.foto_url = prod.image_front_small_url;
+      prodPend[c] = Object.assign({ codigo: c }, prodPend[c] || {}, cambios);
+      catalogo[c] = Object.assign({}, p, cambios);
+      encontrados++;
+    } catch (e) {
+      delete offIntentados[c]; // sin respuesta: se reintenta en la próxima sincronización
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  if (codigos.length) await idb.poner('kv', offIntentados, 'offIntentados');
+  if (encontrados) {
+    await idb.poner('kv', prodPend, 'prodPend');
+    await idb.poner('kv', catalogo, 'catalogo');
+  }
+  return encontrados > 0;
 }
 
 function convertirCantidad(q, u) {
@@ -1921,11 +1970,17 @@ async function sincronizar(manual) {
     }
 
     // Fotos (después de las fichas, para que el producto ya exista en la hoja)
+    // Una foto que falla no debe impedir descargar el stock: se queda pendiente y se avisa
+    let errorFoto = '';
     for (const c of Object.keys(fotosPend)) {
       const dataUrl = fotosPend[c];
-      await llamar('POST', { accion: 'foto', codigo: c, datos: dataUrl.split(',')[1] });
-      if (fotosPend[c] === dataUrl) delete fotosPend[c];
-      await idb.poner('kv', fotosPend, 'fotosPend');
+      try {
+        await llamar('POST', { accion: 'foto', codigo: c, datos: dataUrl.split(',')[1] });
+        if (fotosPend[c] === dataUrl) delete fotosPend[c];
+        await idb.poner('kv', fotosPend, 'fotosPend');
+      } catch (e) {
+        errorFoto = 'foto de ' + c + ': ' + e.message;
+      }
     }
 
     Object.keys(historialCache).forEach(function (k) { delete historialCache[k]; });
@@ -1938,8 +1993,10 @@ async function sincronizar(manual) {
 
     ajustes.ultimaSync = new Date().toISOString();
     await guardarAjustesLocales();
-    ultimoError = '';
-    if (manual) toast('Sincronizado');
+    ultimoError = errorFoto;
+    if (manual) toast(errorFoto ? 'Sincronizado, pero falló una ' + errorFoto : 'Sincronizado', errorFoto ? 4000 : undefined);
+    // Productos escaneados sin red: buscar ahora su nombre en Open Food Facts
+    if (await completarDesdeOFF()) resincronizar = true;
   } catch (e) {
     console.error(e);
     ultimoError = e.message;
