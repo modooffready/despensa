@@ -1,0 +1,117 @@
+id	categoria	descripcion	cantidad_objetivo	unidad	almacen	notas
+TA-01	BEBIDA	Agua embotellada, garrafa 6,25 L	17	uds	Trastero Ávila	~3 L/persona/día. Mínimo intocable: 8 garrafas (agua de la Caja 72 h)
+TA-02	BEBIDA	Leche UHT	20	litros	Trastero Ávila	
+TA-03	BEBIDA	Zumos (brik 1 L)	8	uds	Trastero Ávila	
+TA-04	POTABILIZAR	Lejía apta para desinfección de agua de bebida	1	litros	Trastero Ávila	Plan B si se acaba el agua
+TA-05	POTABILIZAR	Filtro de agua	1	uds	Trastero Ávila	Modelo pendiente
+TA-06	PLATOS_PREPARADOS	Platos preparados en lata (fabada, lentejas, callos…)	15	uds	Trastero Ávila	Antes 10 (revisión 8 nov 2026)
+TA-07	CONSERVAS	Legumbre cocida en bote	20	uds	Trastero Ávila	
+TA-08	CONSERVAS	Atún / sardinas / caballa en lata	30	uds	Trastero Ávila	
+TA-09	CONSERVAS	Verdura en conserva (maíz, guisantes, pimientos)	15	uds	Trastero Ávila	
+TA-10	CONSERVAS	Fruta en almíbar / compotas	8	uds	Trastero Ávila	
+TA-11	COCINAR	Arroz	4	kg	Trastero Ávila	
+TA-12	COCINAR	Pasta	4	kg	Trastero Ávila	
+TA-13	CONDIMENTOS	Aceite de oliva	2	litros	Trastero Ávila	
+TA-14	CONDIMENTOS	Tomate triturado / frito	6	uds	Trastero Ávila	
+TA-15	CONDIMENTOS	Sal	1	kg	Trastero Ávila	
+TA-16	CONDIMENTOS	Azúcar	1	kg	Trastero Ávila	
+TA-17	CONDIMENTOS	Caldo (brik 1 L)	4	uds	Trastero Ávila	Sirve también como líquido para cocer
+TA-18	DESAYUNO	Galletas / tostadas / crackers	3	kg	Trastero Ávila	
+TA-19	DESAYUNO	Copos de avena o cereales	2	kg	Trastero Ávila	
+TA-20	DESAYUNO	Crema de cacahuete o de cacao	3	uds	Trastero Ávila	
+TA-21	DESAYUNO	Cola Cao / Nesquik / café / infusiones	3	uds	Trastero Ávila	1 cacao soluble + 1 café + 1 caja de infusiones
+TA-22	DESAYUNO	Miel / mermelada	2	uds	Trastero Ávila	
+TA-23	SNACKS	Frutos secos	1,5	kg	Trastero Ávila	
+TA-24	SNACKS	Chocolate (tableta)	4	uds	Trastero Ávila	
+TA-25	MENAJE_Y_GAS	Cartucho de gas Campingaz CP 250	8	uds	Trastero Ávila	Comprobar la duración real de un cartucho
+TA-26	MENAJE_Y_GAS	Abrelatas manual	2	uds	Trastero Ávila	
+TA-27	MENAJE_Y_GAS	Mechero	2	uds	Trastero Ávila	En bolsa estanca
+TA-28	MENAJE_Y_GAS	Cerillas (caja)	2	uds	Trastero Ávila	En bolsa estanca
+TA-29	MENAJE_Y_GAS	Desechables (pack)	5	uds	Trastero Ávila	1 pack por persona
+TA-30	ENERGIA	Pilas AA	24	uds	Trastero Ávila	Probablemente ya cubierto (contar)
+TA-31	HIGIENE	Papel higiénico	16	rollos	Trastero Ávila	
+TA-32	HIGIENE	Toallitas húmedas	4	paquetes	Trastero Ávila	
+TA-33	HIGIENE	Gel hidroalcohólico	2	uds	Trastero Ávila	
+TA-34	HIGIENE	Pasta de dientes / gel / champú	3	uds	Trastero Ávila	1 de cada
+TA-35	HIGIENE	Higiene femenina (paquete ~20 uds)	4	paquetes	Trastero Ávila	2 ciclos; 1 paquete por persona y ciclo
+TA-36	LIMPIEZA	Bolsas de basura	2	rollos	Trastero Ávila	
+TA-37	LIMPIEZA	Papel de cocina	4	rollos	Trastero Ávila	
+TA-38	LIMPIEZA	Lavavajillas a mano	1	uds	Trastero Ávila	
+TA-39	LIMPIEZA	Guantes desechables (caja)	1	uds	Trastero Ávila	
+TA-40	BOTIQUIN	Medicación habitual (reserva 14 días)		uds	Trastero Ávila	Pendiente: depende de la medicación de cada uno
+TA-41	BOTIQUIN	Analgésicos / antitérmicos (envases)	4	uds	Trastero Ávila	2 de adulto + 2 infantiles; dosis según prospecto y peso
+TA-42	BOTIQUIN	Suero oral (caja)	2	uds	Trastero Ávila	
+TA-43	BOTIQUIN	Termómetro	1	uds	Trastero Ávila	Con pilas de repuesto
+TA-44	BOTIQUIN	Tiritas, gasas, desinfectante	3	uds	Trastero Ávila	1 de cada
+TA-45	ENERGIA	Pilas AAA	36	uds	Trastero Ávila	Frontales y radio. Probablemente ya cubierto (contar)
+CJ-01	PLATOS_PREPARADOS	Platos preparados en lata (comestibles fríos)	6	uds	Caja 72 h	2 latas por comida × 3 comidas
+CJ-02	CONSERVAS	Legumbre cocida	6	uds	Caja 72 h	Mejor lata o brik que cristal
+CJ-03	CONSERVAS	Atún / sardinas en lata	9	uds	Caja 72 h	
+CJ-04	CONSERVAS	Compotas o fruta en bolsita	10	uds	Caja 72 h	Para los niños
+CJ-05	BEBIDA	Leche UHT	6	litros	Caja 72 h	
+CJ-06	BEBIDA	Zumos individuales (brik 200 ml)	10	uds	Caja 72 h	
+CJ-07	DESAYUNO	Galletas	1	kg	Caja 72 h	
+CJ-08	DESAYUNO	Cereales	0,5	kg	Caja 72 h	
+CJ-09	DESAYUNO	Crema de cacao o cacahuete	1	uds	Caja 72 h	
+CJ-10	DESAYUNO	Picos o pan tostado	2	paquetes	Caja 72 h	Para untar o acompañar
+CJ-11	SNACKS	Frutos secos	1	kg	Caja 72 h	
+CJ-12	SNACKS	Chocolate (tableta)	2	uds	Caja 72 h	
+CJ-13	MENAJE_Y_GAS	Abrelatas manual	1	uds	Caja 72 h	Aunque las latas sean de abre fácil
+CJ-14	MENAJE_Y_GAS	Desechables (pack de platos, vasos y cubiertos)	1	uds	Caja 72 h	Para 5 personas
+CJ-15	LIMPIEZA	Papel de cocina	1	rollos	Caja 72 h	
+CJ-16	LIMPIEZA	Bolsas de basura	1	rollos	Caja 72 h	
+CJ-17	HIGIENE	Toallitas húmedas	1	paquetes	Caja 72 h	
+CJ-18	HIGIENE	Gel hidroalcohólico	1	uds	Caja 72 h	
+CJ-19	ENERGIA	Linterna o frontal + pilas de repuesto	1	uds	Caja 72 h	Para que la caja no dependa de otra estancia
+PE-01	BEBIDA	Agua en brik o botella de 0,5 L	10	uds	Peugeot 5008	1 L/persona para 24 h; rotar cada 6 meses
+PE-02	SNACKS	Ración de emergencia de larga duración (~2.400 kcal)	2	uds	Peugeot 5008	Marca pendiente
+PE-03	BOTIQUIN	Botiquín de coche (tiritas, gasas, desinfectante, analgésicos)	1	uds	Peugeot 5008	
+PE-04	EQUIPO	Manta térmica	5	uds	Peugeot 5008	1 por persona
+PE-05	EQUIPO	Manta de verdad (polar)	2	uds	Peugeot 5008	Invierno
+PE-06	EQUIPO	Chaleco reflectante	2	uds	Peugeot 5008	
+PE-07	EQUIPO	Cadenas o fundas textiles de nieve	1	juego	Peugeot 5008	Medida de neumático pendiente
+PE-08	EQUIPO	Rasqueta + guantes	1	uds	Peugeot 5008	
+PE-09	ENERGIA	Frontal	2	uds	Peugeot 5008	AAA, como las de casa
+PE-10	ENERGIA	Pilas AAA de repuesto	6	uds	Peugeot 5008	Litio si es posible (aguantan mejor el frío)
+PE-11	ENERGIA	Powerbank + cable	1	uds	Peugeot 5008	Recargar cada 3 meses
+PE-12	ENERGIA	Cargador USB de mechero	1	uds	Peugeot 5008	
+PE-13	HIGIENE	Papel higiénico + toallitas + gel hidroalcohólico	3	uds	Peugeot 5008	1 de cada
+PE-14	LIMPIEZA	Bolsas de basura	5	uds	Peugeot 5008	
+PE-15	EQUIPO	Aceite de motor (1 L, homologado según manual)	1	uds	Peugeot 5008	No rellenar durante la prueba de consumo de 1.000 km sin consultar al concesionario
+MZ-01	BEBIDA	Agua en brik o botella de 0,5 L	4	uds	Mazda 3	Rotar cada 6 meses
+MZ-02	SNACKS	Ración de emergencia de larga duración (~2.400 kcal)	1	uds	Mazda 3	Marca pendiente
+MZ-03	BOTIQUIN	Botiquín de coche	1	uds	Mazda 3	
+MZ-04	EQUIPO	Manta térmica	2	uds	Mazda 3	
+MZ-05	EQUIPO	Manta polar	1	uds	Mazda 3	Ruta con puertos de montaña en invierno
+MZ-06	EQUIPO	Chaleco reflectante	1	uds	Mazda 3	
+MZ-07	EQUIPO	Cadenas o fundas textiles de nieve	1	juego	Mazda 3	Medida pendiente
+MZ-08	EQUIPO	Rasqueta + guantes	1	uds	Mazda 3	
+MZ-09	EQUIPO	Cables de arranque o arrancador portátil	1	uds	Mazda 3	Coche de 2008: la avería es lo más probable
+MZ-10	EQUIPO	Cinta americana + bridas	1	uds	Mazda 3	Reparaciones de emergencia
+MZ-11	EQUIPO	Aceite de motor (1 L) + refrigerante	1	uds	Mazda 3	Especificación según manual: pendiente
+MZ-12	ENERGIA	Frontal + pilas AAA de repuesto	1	uds	Mazda 3	
+MZ-13	ENERGIA	Powerbank + cable + cargador de mechero	1	uds	Mazda 3	
+MZ-14	HIGIENE	Papel higiénico + toallitas + gel hidroalcohólico	3	uds	Mazda 3	1 de cada
+SO-01	BEBIDA	Agua embotellada, garrafa 6,25 L	8	uds	Sotalbo	Pendiente: bajar si hay agua de red fiable
+SO-02	POTABILIZAR	Lejía apta para agua de bebida	1	litros	Sotalbo	
+SO-03	POTABILIZAR	Filtro de agua		uds	Sotalbo	Pendiente: decidir si va aquí o en Ávila
+SO-04	PLATOS_PREPARADOS	Platos preparados en lata	8	uds	Sotalbo	
+SO-05	CONSERVAS	Legumbre cocida (lata o brik)	10	uds	Sotalbo	Sin cristal si se hiela
+SO-06	CONSERVAS	Atún / sardinas en lata	15	uds	Sotalbo	
+SO-07	CONSERVAS	Verdura y fruta en conserva	8	uds	Sotalbo	
+SO-08	COCINAR	Arroz	2	kg	Sotalbo	En caja hermética
+SO-09	COCINAR	Pasta	2	kg	Sotalbo	En caja hermética
+SO-10	CONDIMENTOS	Aceite, sal y tomate frito	3	uds	Sotalbo	1 de cada
+SO-11	DESAYUNO	Galletas	1,5	kg	Sotalbo	
+SO-12	DESAYUNO	Leche UHT	10	litros	Sotalbo	
+SO-13	SNACKS	Frutos secos	0,5	kg	Sotalbo	Ojo con los ratones
+SO-14	MENAJE_Y_GAS	Cartuchos CP 250	4	uds	Sotalbo	Pendiente: depende de la cocina que haya
+SO-15	MENAJE_Y_GAS	Abrelatas, mecheros y cerillas	3	uds	Sotalbo	1 de cada
+SO-16	MENAJE_Y_GAS	Desechables (pack)	5	uds	Sotalbo	
+SO-17	ENERGIA	Pilas AA	12	uds	Sotalbo	Alcalinas o litio (las recargables se descargan en almacén)
+SO-23	ENERGIA	Pilas AAA	12	uds	Sotalbo	Separada de SO-17 (en el documento: 12 + 12)
+SO-18	ENERGIA	Linterna o frontal	2	uds	Sotalbo	
+SO-19	HIGIENE	Papel higiénico	8	rollos	Sotalbo	
+SO-20	HIGIENE	Toallitas + gel hidroalcohólico	2	uds	Sotalbo	1 de cada
+SO-21	LIMPIEZA	Bolsas de basura + lavavajillas	2	uds	Sotalbo	1 de cada
+SO-22	BOTIQUIN	Botiquín básico (tiritas, gasas, desinfectante, analgésicos, suero oral)	1	uds	Sotalbo	

@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.8.5';
+const VERSION = '2.9.1';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -655,6 +655,8 @@ const REGLAS = {
   SNACKS: ['patatas fritas', 'gusanito', 'frutos secos', 'almendra', 'nuez', 'cacahuete', 'pistacho', 'chocolate', 'barrita', 'chips', 'palomita', 'snack'],
   MENAJE_Y_GAS: ['cartucho', 'campingaz', 'gas', 'abrelatas', 'mechero', 'cerilla', 'desechable', 'vaso', 'cubierto', 'servilleta', 'hornillo'],
   ENERGIA: ['pila', 'bateria', 'cargador', 'linterna', 'frontal', 'panel solar', 'powerbank', 'power bank'],
+  EQUIPO: ['manta', 'chaleco', 'cadenas', 'fundas textiles', 'nieve', 'rasqueta', 'cinta americana', 'bridas', 'arranque', 'arrancador',
+           'aceite de motor', 'motor', 'refrigerante', 'anticongelante', 'herramienta', 'navaja', 'multiusos', 'triangulo'],
   HIGIENE: ['papel higienico', 'toallita', 'gel', 'champu', 'pasta de dientes', 'dentifrico', 'cepillo', 'desodorante', 'compresa', 'tampon', 'jabon', 'hidroalcoholico'],
   LIMPIEZA: ['bolsa de basura', 'bolsas de basura', 'lavavajillas', 'detergente', 'friegasuelos', 'estropajo', 'guantes', 'papel de cocina', 'amoniaco', 'bayeta'],
   BOTIQUIN: ['paracetamol', 'ibuprofeno', 'tirita', 'gasa', 'suero', 'termometro', 'betadine', 'desinfectante', 'venda', 'medicamento', 'aspirina', 'clorhexidina']
@@ -1297,10 +1299,10 @@ function pintarStock() {
 
 /* ---------- Ficha de producto (estilo biblioteca) ---------- */
 const COLOR_CAT = { BEBIDA: '#2f7fa8', POTABILIZAR: '#3a8fb7', PLATOS_PREPARADOS: '#b5562b', CONSERVAS: '#5d6b3a', COCINAR: '#a07b2c',
-  CONDIMENTOS: '#8a5a2b', SALSAS: '#b8452e', DESAYUNO: '#c0843a', SNACKS: '#7a2e3a', MENAJE_Y_GAS: '#4a5a6a', ENERGIA: '#c89b1e', HIGIENE: '#3d7a74',
+  CONDIMENTOS: '#8a5a2b', SALSAS: '#b8452e', DESAYUNO: '#c0843a', SNACKS: '#7a2e3a', MENAJE_Y_GAS: '#4a5a6a', ENERGIA: '#c89b1e', EQUIPO: '#5d6b4f', HIGIENE: '#3d7a74',
   LIMPIEZA: '#4f6f9a', BOTIQUIN: '#a8323a' };
 const ICONO_CAT = { BEBIDA: '💧', POTABILIZAR: '🫙', PLATOS_PREPARADOS: '🍲', CONSERVAS: '🥫', COCINAR: '🍚', CONDIMENTOS: '🧂', SALSAS: '🌶️',
-  DESAYUNO: '☕', SNACKS: '🍫', MENAJE_Y_GAS: '🔥', ENERGIA: '🔋', HIGIENE: '🧼', LIMPIEZA: '🧽', BOTIQUIN: '🩹' };
+  DESAYUNO: '☕', SNACKS: '🍫', MENAJE_Y_GAS: '🔥', ENERGIA: '🔋', EQUIPO: '🛠️', HIGIENE: '🧼', LIMPIEZA: '🧽', BOTIQUIN: '🩹' };
 let fichaActual = { codigo: '', lista: [] };
 
 function partir(texto, max) {
@@ -1553,7 +1555,20 @@ function calcularObjetivos(porCodigo, almacen) {
     const lotes = porCodigo[c].filter(function (l) { return mismoSitio(l.almacen, almacen); });
     if (!lotes.length) return;
     const p = catalogo[c] || { codigo: c };
-    let linea = porId[p.linea_objetivo], automatica = false;
+    let linea = porId[p.linea_objetivo], automatica = false, equivalente = '';
+    // La línea del producto es de otra estancia (atún → TA-08 guardado en la Caja 72 h): se busca su equivalente aquí
+    if (!linea && p.linea_objetivo && p.linea_objetivo !== SIN_LINEA) {
+      const orig = objetivos.find(function (o) { return o.id === p.linea_objetivo; });
+      if (orig) {
+        const mias = raices(orig.descripcion);
+        let mejor = null, max = 0;
+        (porCat[orig.categoria] || []).forEach(function (l) {
+          const n = coincidencias(mias, raices(l.o.descripcion));
+          if (n > max) { max = n; mejor = l; }
+        });
+        if (mejor) { linea = mejor; equivalente = orig.id; }
+      }
+    }
     if (!linea) {
       const cand = porCat[p.categoria] || [];
       if (cand.length === 1) { linea = cand[0]; automatica = true; }
@@ -1578,7 +1593,7 @@ function calcularObjetivos(porCodigo, almacen) {
     linea.pronto += aporte === null ? 0 : pronto * aporte;
     linea.caducado += caducado;
     linea.productos.push({ codigo: c, envases: validos, cantidad: cant, caducado: caducado, pronto: pronto,
-                           automatica: automatica, sinContenido: aporte === null });
+                           automatica: automatica, equivalente: equivalente, sinContenido: aporte === null });
   });
 
   lineas.forEach(function (l) {
@@ -1718,7 +1733,8 @@ function pintarObjetivos() {
               return '<button class="o-prod" data-c="' + esc(x.codigo) + '">' + esc(p.nombre || x.codigo) + ' · ' +
                 (x.sinContenido ? '<span class="pronto">falta contenido</span>' : x.envases + ' env.' +
                   (normalizar(l.o.unidad) !== 'uds' && x.cantidad !== x.envases ? ' = ' + formatoCant(x.cantidad) + ' ' + esc(l.o.unidad) : '')) +
-                (x.automatica ? ' <span class="muted">(por categoría)</span>' : '') + '</button>';
+                (x.automatica ? ' <span class="muted">(por categoría)</span>' : '') +
+                (x.equivalente ? ' <span class="muted">(como ' + esc(x.equivalente) + ')</span>' : '') + '</button>';
             }).join('') + '</div>' : '<div class="lote">Nada guardado todavía.</div>') + '</div>';
         }).join('');
         if (c.sinLinea.length) h += '<div class="lote">Sin línea: ' + c.sinLinea.map(function (x) {

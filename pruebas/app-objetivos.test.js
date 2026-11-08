@@ -6,7 +6,7 @@ const http = require('http'), fs = require('fs'), path = require('path');
 const { chromium } = require('playwright');
 
 const RAIZ = path.join(__dirname, '..');
-const T = 'Trastero Ávila', M = 'Mochila – Comida/agua';
+const T = 'Trastero Ávila', M = 'Mochila – Comida/agua', C = 'Caja 72 h';
 const hoy = new Date();
 const mes = function (d) { const f = new Date(hoy.getFullYear(), hoy.getMonth() + d, 1); return f.getFullYear() + '-' + String(f.getMonth() + 1).padStart(2, '0'); };
 
@@ -14,7 +14,7 @@ const DATOS = {
   ok: true, ultimaCopia: new Date().toISOString(),
   config: ['BEBIDA', 'PLATOS_PREPARADOS', 'CONSERVAS', 'COCINAR', 'SNACKS', 'MENAJE_Y_GAS', 'HIGIENE', 'BOTIQUIN']
     .map(function (c) { return { tipo: 'CATEGORIA', valor: c, padre: '', estancia: '', activo: true }; })
-    .concat([T, M].map(function (e) { return { tipo: 'ESTANCIA', valor: e, padre: '', estancia: '', activo: true }; })),
+    .concat([T, M, C].map(function (e) { return { tipo: 'ESTANCIA', valor: e, padre: '', estancia: '', activo: true }; })),
   objetivos: [
     ['TA-01', 'BEBIDA', 'Agua embotellada, garrafa 6,25 L', 17, 'uds'], ['TA-02', 'BEBIDA', 'Leche UHT', 20, 'litros'],
     ['TA-06', 'PLATOS_PREPARADOS', 'Platos preparados en lata', 10, 'uds'],
@@ -22,7 +22,10 @@ const DATOS = {
     ['TA-11', 'COCINAR', 'Arroz', 4, 'kg'], ['TA-23', 'SNACKS', 'Frutos secos', '1,5', 'kg'],
     ['TA-26', 'MENAJE_Y_GAS', 'Abrelatas manual', 2, 'uds'], ['TA-31', 'HIGIENE', 'Papel higiénico', 16, 'rollos'],
     ['TA-40', 'BOTIQUIN', 'Medicación habitual', '', 'uds']
-  ].map(function (r) { return { id: r[0], categoria: r[1], descripcion: r[2], cantidad_objetivo: r[3], unidad: r[4], almacen: T, notas: '' }; }),
+  ].map(function (r) { return { id: r[0], categoria: r[1], descripcion: r[2], cantidad_objetivo: r[3], unidad: r[4], almacen: T, notas: '' }; }).concat([
+    ['CJ-02', 'CONSERVAS', 'Legumbre cocida', 6, 'uds'], ['CJ-03', 'CONSERVAS', 'Atún / sardinas en lata', 9, 'uds'],
+    ['CJ-04', 'CONSERVAS', 'Compotas o fruta en bolsita', 10, 'uds']
+  ].map(function (r) { return { id: r[0], categoria: r[1], descripcion: r[2], cantidad_objetivo: r[3], unidad: r[4], almacen: C, notas: '' }; })),
   productos: [
     { codigo: 'G', nombre: 'Garrafa', categoria: 'BEBIDA', linea_objetivo: 'TA-01', unidad: 'litros', contenido: 6.25 },
     { codigo: 'L', nombre: 'Leche', categoria: 'BEBIDA', linea_objetivo: 'TA-02', unidad: 'ml', contenido: 1000 },
@@ -38,7 +41,7 @@ const DATOS = {
   ],
   stock: [
     ['G', mes(40), T, 5], ['G', mes(40), M, 3], ['L', mes(12), T, 6], ['L', '2020-01', T, 2], ['F', mes(1), T, 4],
-    ['A', mes(30), T, 12], ['S', mes(30), T, 3], ['R', mes(20), T, 2], ['R2', mes(20), T, 1], ['N', mes(8), T, 2],
+    ['A', mes(30), T, 12], ['A', mes(30), C, 4], ['S', mes(30), T, 3], ['R', mes(20), T, 2], ['R2', mes(20), T, 1], ['N', mes(8), T, 2],
     ['P', '', T, 1], ['K', mes(10), T, 2], ['AB', '', T, 2], ['AB', '', M, 1]
   ].map(function (r) { return { codigo: r[0], caducidad: r[1], almacen: r[2], estante: '', stock: r[3] }; })
 };
@@ -64,7 +67,7 @@ test('pantalla Objetivos: avance por línea y lista de la compra', async functio
     await p.fill('#a-url', 'https://script.google.com/macros/s/X/exec');
     await p.fill('#a-token', 'k'); await p.fill('#a-usuario', 'Prueba');
     await p.evaluate(function () { return guardarAjustes(); });
-    await p.waitForFunction(function () { return objetivos.length === 10; });
+    await p.waitForFunction(function () { return objetivos.length === 13; });
 
     const r = await p.evaluate(function () {
       const res = calcularObjetivos(lotesTodos([]), 'Trastero Ávila');
@@ -85,6 +88,14 @@ test('pantalla Objetivos: avance por línea y lista de la compra', async functio
     assert.strictEqual(L['TA-31'].tiene, 12, 'pack de 12 rollos');
     assert.strictEqual(L['TA-26'].completa, true, 'abrelatas (equipo) completo');
     assert.strictEqual(L['TA-40'].completa, false);
+
+    // Caja 72 h: el atún (línea TA-08) cuenta para su equivalente CJ-03 y no suma al Trastero
+    const caja = await p.evaluate(function () {
+      const res = calcularObjetivos(lotesTodos([]), 'Caja 72 h');
+      const l = res.lineas.find(function (x) { return x.o.id === 'CJ-03'; });
+      return { tiene: l.tiene, eq: l.productos[0].equivalente, sinLinea: res.sinLinea.length, lineas: res.lineas.length };
+    });
+    assert.deepStrictEqual(caja, { tiene: 4, eq: 'TA-08', sinLinea: 0, lineas: 3 });
 
     // Pantalla
     await p.click('#t-stock'); await p.click('#s-objetivos');

@@ -14,6 +14,7 @@ const DATOS = {
   config: [{ tipo: 'CATEGORIA', valor: 'CONDIMENTOS', padre: 'DESPENSA', estancia: 'DESPENSA', activo: true },
            { tipo: 'CATEGORIA', valor: 'SALSAS', padre: 'DESPENSA', estancia: 'DESPENSA', activo: true },
            { tipo: 'CATEGORIA', valor: 'HIGIENE', padre: 'MATERIAL', estancia: 'MATERIAL', activo: true },
+           { tipo: 'CATEGORIA', valor: 'EQUIPO', padre: 'MATERIAL', estancia: 'MATERIAL', activo: true },
            { tipo: 'ESTANCIA', valor: T, padre: '', estancia: '', activo: true }],
   productos: [{ codigo: '8410000000001', nombre: 'Ketchup', categoria: 'CONDIMENTOS', unidad: 'g', contenido: 560 },
               { codigo: '8410000000002', nombre: 'Salsa de soja con menos sal', categoria: 'CONDIMENTOS', linea_objetivo: 'TA-15' }],
@@ -96,6 +97,12 @@ test('editar ficha no registra movimiento; deshacer vale para cualquier movimien
     await p.waitForFunction(function () { return catalogo['8410000000002'].linea_objetivo === 'NINGUNA' && catalogo['8410000000002'].categoria === 'SALSAS'; });
     const r = await p.evaluate(function () { return calcularObjetivos(lotesTodos([]), 'Trastero Ávila').lineas.map(function (l) { return l.productos.length; }); });
     assert.deepStrictEqual(r, [0, 0]);
+    // 5) «Aceite de motor» se sugiere como EQUIPO, no como Condimentos
+    const sug = await p.evaluate(function () {
+      document.getElementById('p-nombre').value = 'Aceite de motor 5W30';
+      return sugerirCategorias()[0].cat;
+    });
+    assert.strictEqual(sug, 'EQUIPO');
     assert.deepStrictEqual(errores, []);
   } finally {
     await navegador.close(); srv.close();
