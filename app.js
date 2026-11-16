@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.9.3';
+const VERSION = '2.9.4';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -392,10 +392,10 @@ async function refrescarEstado() {
   $('btn-caducidades').classList.toggle('oculto', !(cad + pronto));
   $('btn-caducidades').textContent = '⏰ ' + [cad ? cad + (cad === 1 ? ' lote caducado' : ' lotes caducados') : '', pronto ? pronto + ' caduca' + (pronto === 1 ? '' : 'n') + ' en 3 meses' : ''].filter(String).join(' · ') + ' · Ver';
   $('btn-revision').classList.toggle('oculto', !revision.length);
-  $('btn-revision').textContent = '⚠️ ' + revision.length + (revision.length === 1 ? ' movimiento rechazado' : ' movimientos rechazados') + ' · Revisar';
+  $('btn-revision').textContent = '⚠️ ' + revision.length + (revision.length === 1 ? ' movimiento no se pudo guardar' : ' movimientos no se pudieron guardar') + ' · Ver';
   const n = incompletos().length;
   $('btn-incompletos').classList.toggle('oculto', !n);
-  $('btn-incompletos').textContent = '⚠️ ' + n + (n === 1 ? ' producto' : ' productos') + ' sin nombre o sin categoría · Completar';
+  $('btn-incompletos').textContent = '⚠️ Faltan datos en ' + n + (n === 1 ? ' producto' : ' productos') + ' · Completar';
 }
 
 // Productos a los que les falta el nombre o la categoría (p. ej. no estaban en Open Food Facts)
@@ -629,7 +629,7 @@ async function abrirFormulario(codigo, opciones_) {
   ponerModoEdicion(!!op.editar && !op.corregir);
   mostrar('formulario');
   pintarFoto();
-  $('f-off').textContent = op.corregir ? '⚠️ Corrigiendo un movimiento rechazado: ' + op.corregir.motivo : '';
+  $('f-off').textContent = op.corregir ? '⚠️ Corrigiendo un movimiento que no se pudo guardar: ' + op.corregir.motivo : '';
   if (actual.sinCodigo && !p.nombre) { pintarCategoriasFicha(); setTimeout(function () { $('p-nombre').focus(); }, 100); }
   if (!actual.sinCodigo && !p.nombre) consultarOFF(codigo);
 }
@@ -957,7 +957,7 @@ function pintarCategoriasFicha() {
       pintarCategoriasFicha();
       pintarCabeceraProducto();
       const linea = objetivos.find(function (o) { return o.id === $('p-linea').value; });
-      if (linea && linea.categoria !== actual.categoria) { actual.lineaTocada = false; pintarLineas(''); toast('Se ha quitado la línea «' + linea.descripcion + '»: es de otra categoría'); }
+      if (linea && linea.categoria !== actual.categoria) { actual.lineaTocada = false; pintarLineas(''); toast('Se ha quitado la subcategoría «' + linea.descripcion + '»: es de otra categoría'); }
       else if (!actual.lineaTocada) pintarLineas(''); else pintarLineas();
     };
   });
@@ -999,7 +999,7 @@ function pintarLineas(valor) {
     elegido = propias[0].o.id;
     sugerida = elegido;
   }
-  let html = '<option value="">' + (objetivos.length ? '— Ninguno —' : '— Sin objetivos descargados —') + '</option>';
+  let html = '<option value="">' + (objetivos.length ? '— Ninguna —' : '— Sin subcategorías descargadas —') + '</option>';
   html += propias.map(function (x) {
     return '<option value="' + esc(x.o.id) + '">' + esc(x.o.descripcion) + (x.o.id === sugerida ? ' (sugerida)' : '') + '</option>';
   }).join('');
@@ -1639,6 +1639,8 @@ function calcularObjetivos(porCodigo, almacen) {
           if (n > max) { max = n; mejor = l; }
         });
         if (mejor) { linea = mejor; equivalente = orig.id; }
+        // «Varios» es el cajón de lo que no encaja: fuera de su lugar ni cuenta para otra subcategoría ni avisa
+        else if (/^varios\b/.test(normalizar(orig.descripcion))) return;
       }
     }
     if (!linea) {
@@ -1724,7 +1726,7 @@ function problemasObjetivos() {
     if (vistos[o.id] && repetidos.indexOf(o.id) < 0) repetidos.push(o.id);
     vistos[o.id] = true;
   });
-  if (repetidos.length) avisos.push('id repetido: ' + repetidos.join(', ') + ' (cada línea necesita un id distinto)');
+  if (repetidos.length) avisos.push('id repetido: ' + repetidos.join(', ') + ' (cada subcategoría necesita un id distinto)');
   const ests = valores('ESTANCIA', '', true);
   if (ests.length) {
     almacenesObjetivos().forEach(function (a) {
@@ -1770,18 +1772,17 @@ function pintarObjetivos() {
   const conObj = r.lineas.filter(function (l) { return l.objetivo > 0; });
   const completas = conObj.filter(function (l) { return l.completa; }).length;
   const sinCant = r.lineas.length - conObj.length;
-  $('o-resumen').innerHTML = '<b>' + esc(objVista.almacen) + '</b> · ' + completas + ' de ' + conObj.length + ' líneas completas' +
-    (sinCant ? ' · ' + sinCant + ' sin cantidad decidida' : '') +
+  $('o-resumen').innerHTML = '<b>' + esc(objVista.almacen) + '</b> · ' + completas + ' de ' + conObj.length + (conObj.length === 1 ? ' objetivo completo' : ' objetivos completos') +
     '<br><span style="font-size:13px">Solo cuenta lo guardado aquí. Lo caducado no cuenta.</span>';
 
   // Avisos: productos con stock aquí que no cuentan para ninguna línea
   const n = r.sinLinea.length;
   let av = '';
   if (n) {
-    av = '<button class="chip" id="o-ver-sin">⚠️ ' + n + (n === 1 ? ' producto no cuenta' : ' productos no cuentan') +
-      ' para ningún objetivo · ' + (objVista.verSinLinea ? 'Ocultar' : 'Ver') + '</button>';
+    av = '<button class="chip" id="o-ver-sin">⚠️ ' + n + (n === 1 ? ' producto' : ' productos') +
+      ' sin subcategoría · ' + (objVista.verSinLinea ? 'Ocultar' : 'Ver') + '</button>';
     if (objVista.verSinLinea) {
-      av += '<div class="tarjeta" style="margin-top:8px"><p class="muted" style="margin-top:0">Su categoría tiene varias líneas: toca cada uno y elige su «Línea de objetivo» en la ficha.</p>' +
+      av += '<div class="tarjeta" style="margin-top:8px"><p class="muted" style="margin-top:0">Mientras no tengan subcategoría no cuentan para ningún objetivo. Toca cada uno y elígela en su ficha; si no encaja en ninguna, usa «Varios».</p>' +
         r.sinLinea.map(function (x) {
           const p = catalogo[x.codigo] || {};
           return '<div class="lista-item o-editar" data-c="' + esc(x.codigo) + '"><span>' + esc(p.nombre || x.codigo) +
@@ -1801,7 +1802,7 @@ function pintarObjetivos() {
     const t = textoListaCompra(r, objVista.almacen);
     $('o-lista').innerHTML = '';
     $('o-compra').classList.remove('oculto');
-    $('o-texto').textContent = t || '✅ No falta nada: todas las líneas con cantidad están completas.';
+    $('o-texto').textContent = t || '✅ No falta nada: todos los objetivos están completos.';
     objVista.textoMarcar = textoListaMarcar(r);
     $('o-compartir').disabled = !t; $('o-copiar').disabled = !t; $('o-keep').disabled = !t;
   } else {
@@ -1810,9 +1811,9 @@ function pintarObjetivos() {
       const abierta = !!objVista.abiertas[c.categoria];
       let h = '<div class="prod o-cat" style="border-left:5px solid ' + (COLOR_CAT[c.categoria] || 'var(--verde)') + '">' +
         '<div class="prod-cab o-cab" data-cat="' + esc(c.categoria) + '"><span>' + (ICONO_CAT[c.categoria] || '') + ' ' + esc(bonito(c.categoria)) + '</span>' +
-        '<span class="muted">' + (c.conObjetivo ? c.completas + '/' + c.conObjetivo : 'sin cantidad') + ' ' + (abierta ? '▴' : '▾') + '</span></div>' +
+        '<span class="muted">' + (c.conObjetivo ? c.completas + ' de ' + c.conObjetivo : 'sin objetivo') + ' ' + (abierta ? '▴' : '▾') + '</span></div>' +
         (c.conObjetivo ? barra(c.avance) : '');
-      if (c.sinLinea.length) h += '<div class="lote pronto">⚠️ ' + c.sinLinea.length + ' sin línea asignada</div>';
+      if (c.sinLinea.length) h += '<div class="lote pronto">⚠️ ' + c.sinLinea.length + ' sin subcategoría</div>';
       if (abierta) {
         h += c.lineas.map(function (l) {
           const avisos = [];
@@ -1820,19 +1821,18 @@ function pintarObjetivos() {
           if (l.caducado > 0) avisos.push('<span class="caducado">' + l.caducado + ' envases caducados (no cuentan)</span>');
           if (l.sinContenido.length) avisos.push('<span class="pronto">⚠️ ' + l.sinContenido.length + ' sin contenido por envase (no cuentan)</span>');
           return '<div class="o-linea"><div class="prod-cab" style="font-weight:500"><span>' + esc(l.o.descripcion) + '</span>' +
-            '<span style="white-space:nowrap">' + (l.objetivo ? '<b>' + formatoCant(l.tiene) + '</b> / ' + formatoCant(l.objetivo) : '<span class="muted">sin cantidad</span>') +
-            ' <span class="muted">' + esc(l.o.unidad) + '</span></span></div>' + (l.objetivo ? barra(l.avance) : '') +
+            '<span style="white-space:nowrap">' + (l.objetivo ? '<b>' + formatoCant(l.tiene) + '</b> / ' + formatoCant(l.objetivo) : '<b>' + formatoCant(l.tiene) + '</b>') +
+            ' <span class="muted">' + esc(l.o.unidad) + (l.objetivo ? '' : ' · sin objetivo') + '</span></span></div>' + (l.objetivo ? barra(l.avance) : '') +
             (avisos.length ? '<div class="lote">' + avisos.join(' · ') + '</div>' : '') +
             (l.productos.length ? '<div class="o-prods">' + l.productos.map(function (x) {
               const p = catalogo[x.codigo] || {};
               return '<button class="o-prod" data-c="' + esc(x.codigo) + '">' + esc(p.nombre || x.codigo) + ' · ' +
-                (x.sinContenido ? '<span class="pronto">falta contenido</span>' : x.envases + ' env.' +
+                (x.sinContenido ? '<span class="pronto">falta contenido</span>' : x.envases + (x.envases === 1 ? ' envase' : ' envases') +
                   (normalizar(l.o.unidad) !== 'uds' && x.cantidad !== x.envases ? ' = ' + formatoCant(x.cantidad) + ' ' + esc(l.o.unidad) : '')) +
-                (x.automatica ? ' <span class="muted">(por categoría)</span>' : '') +
-                (x.equivalente ? ' <span class="muted">(como ' + esc(x.equivalente) + ')</span>' : '') + '</button>';
+                '</button>';
             }).join('') + '</div>' : '<div class="lote">Nada guardado todavía.</div>') + '</div>';
         }).join('');
-        if (c.sinLinea.length) h += '<div class="lote">Sin línea: ' + c.sinLinea.map(function (x) {
+        if (c.sinLinea.length) h += '<div class="lote">Sin subcategoría: ' + c.sinLinea.map(function (x) {
           return '<button class="o-prod o-editar" data-c="' + esc(x.codigo) + '">' + esc((catalogo[x.codigo] || {}).nombre || x.codigo) + ' · asignar</button>';
         }).join('') + '</div>';
       }
@@ -2005,7 +2005,7 @@ async function sincronizar(manual) {
         const original = lotes[i].find(function (m) { return m.id === x.id; });
         if (original) { revision.push({ mov: Object.assign({}, original), motivo: x.motivo, fecha: new Date().toISOString() }); }
         await idb.borrar('pendientes', x.id);
-        await marcarHistorial(x.id, 'rechazado: ' + x.motivo);
+        await marcarHistorial(x.id, 'no se guardó: ' + x.motivo);
       }
       if (r.rechazados.length) await idb.poner('kv', revision, 'revision');
       if (i === 0 && productos.length) {

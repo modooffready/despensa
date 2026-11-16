@@ -195,3 +195,45 @@ test('Objetivos: avisa de ids repetidos y de almacenes que no son una estancia; 
     assert.deepStrictEqual(a.errores, []);
   } finally { await a.cerrar(); }
 });
+
+test('v2.9.4: subcategoría «Varios» y textos sin la palabra «línea»', async function () {
+  const fila = function (id, cat, desc, cant, uni, alm) { return { id: id, categoria: cat, descripcion: desc, cantidad_objetivo: cant, unidad: uni, almacen: alm, notas: '' }; };
+  const C = 'Caja 72 h', PE = 'Peugeot 5008';
+  const datos = { ok: true, version: 2.7, aceptados: [], rechazados: [],
+    config: CONFIG.concat([{ tipo: 'ESTANCIA', valor: C, padre: '', activo: true }]),
+    objetivos: [fila('TA-01', 'BEBIDA', 'Agua embotellada', 100, 'litros', T), fila('TA-51', 'BEBIDA', 'Varios', '', 'uds', T),
+      fila('CJ-05', 'BEBIDA', 'Leche UHT entera', 4, 'litros', C), fila('CJ-06', 'BEBIDA', 'Bifrutas', 6, 'uds', C),
+      fila('PE-01', 'BEBIDA', 'Agua en brik', 10, 'uds', PE)],
+    productos: [{ codigo: 'V', nombre: 'Vino tinto', categoria: 'BEBIDA', linea_objetivo: 'TA-51', unidad: 'ml', contenido: 750 },
+      { codigo: 'X', nombre: 'Refresco', categoria: 'BEBIDA' }],
+    stock: [{ codigo: 'V', caducidad: '', almacen: T, estante: '', stock: 3 }, { codigo: 'V', caducidad: '', almacen: C, estante: '', stock: 1 },
+      { codigo: 'V', caducidad: '', almacen: PE, estante: '', stock: 2 }, { codigo: 'X', caducidad: '', almacen: T, estante: '', stock: 1 }] };
+  const a = await montar({
+    off: function (c, rt) { return json(rt, { status: 0 }, 404); },
+    servidor: function (b, rt) { return json(rt, datos); }
+  });
+  try {
+    const p = a.p;
+    await p.evaluate(function () { return guardarAjustes(); });
+    await p.waitForFunction(function () { return !sincronizando && objetivos.length === 5; });
+    const r = await p.evaluate(async function (x) {
+      const de = function (alm) { const c = calcularObjetivos(lotesTodos([]), alm); return { sin: c.sinLinea.map(function (s) { return s.codigo; }), tiene: c.lineas.map(function (l) { return l.o.id + '=' + l.tiene; }) }; };
+      const res = { trastero: de(x.T), caja: de(x.C), coche: de(x.PE) };
+      objVista.almacen = x.T; await abrirObjetivos();
+      document.querySelector('.o-cab[data-cat="BEBIDA"]').click();
+      res.pantalla = document.getElementById('pantalla-objetivos').textContent;
+      res.etiqueta = document.querySelector('label + select#p-linea').previousElementSibling.textContent;
+      return res;
+    }, { T: T, C: C, PE: PE });
+    assert.deepStrictEqual(r.trastero, { sin: ['X'], tiene: ['TA-01=0', 'TA-51=3'] }, 'en su lugar, Varios guarda el producto; el que no tiene subcategoría avisa');
+    assert.deepStrictEqual(r.caja, { sin: [], tiene: ['CJ-05=0', 'CJ-06=0'] }, 'en la Caja ni cuenta para otra subcategoría ni avisa');
+    assert.deepStrictEqual(r.coche, { sin: [], tiene: ['PE-01=0'] }, 'en el coche no cuenta como agua por ser la única subcategoría de Bebida');
+    assert.match(r.pantalla, /0 de 1 objetivo completo/);
+    assert.match(r.pantalla, /1 producto sin subcategoría/);
+    assert.match(r.pantalla, /Varios\s*3 uds · sin objetivo/);
+    assert.match(r.pantalla, /Vino tinto · 3 envases/);
+    assert.doesNotMatch(r.pantalla, /línea|por categoría|env\./);
+    assert.strictEqual(r.etiqueta, 'Subcategoría (opcional)');
+    assert.deepStrictEqual(a.errores, []);
+  } finally { await a.cerrar(); }
+});

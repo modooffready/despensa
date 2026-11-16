@@ -241,12 +241,12 @@
           <button id="p-consumible" class="activo">Se consume</button>
           <button id="p-equipo">Equipo (no se gasta)</button>
         </div>
-        <label>Contenido de cada unidad (opcional)</label>
+        <label>¿Cuánto trae cada envase? (opcional)</label>
         <div class="fila">
           <input id="p-contenido" type="text" inputmode="decimal" placeholder="Ej.: 1 o 0,5">
           <select id="p-unidad"></select>
         </div>
-        <label>Cuenta para el objetivo (opcional)</label>
+        <label>Subcategoría (opcional)</label>
         <select id="p-linea"></select>
         <label>Foto (para productos que no salen en Open Food Facts)</label>
         <input id="p-foto-input" type="file" accept="image/*" capture="environment" class="oculto">
@@ -365,7 +365,7 @@
 
   <!-- REVISIÓN DE RECHAZADOS -->
   <section id="pantalla-revision" class="oculto">
-    <div class="tarjeta"><h2>Movimientos rechazados</h2>
+    <div class="tarjeta"><h2>Movimientos que no se pudieron guardar</h2>
       <p class="muted">El servidor no los aceptó. No se han perdido: corrígelos, reinténtalos o descártalos.</p></div>
     <div id="r-lista"></div>
     <button class="btn btn-sec" id="r-volver">Volver</button>
@@ -451,6 +451,6 @@
 </div>
 
 <div id="toast" class="oculto"></div>
-<script src="app.js?v=2.9.3"></script>
+<script src="app.js?v=2.9.4"></script>
 </body>
 </html>

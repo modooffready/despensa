@@ -101,7 +101,8 @@ test('pantalla Objetivos: avance por línea y lista de la compra', async functio
     await p.click('#t-stock'); await p.click('#s-objetivos');
     await p.waitForFunction(function () { return document.getElementById('o-resumen').textContent.length > 0; });
     const resumen = await p.textContent('#o-resumen');
-    assert.match(resumen, /1 de 9 líneas completas · 1 sin cantidad decidida/);
+    assert.match(resumen, /1 de 9 objetivos completos/);
+    assert.doesNotMatch(resumen, /línea/);
     await p.click('.o-cab[data-cat="CONSERVAS"]');
     const conservas = await p.textContent('#o-lista');
     assert.match(conservas, /Atún \/ sardinas \/ caballa en lata\s*12 \/ 30/);
