@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.9.2';
+const VERSION = '2.9.3';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -454,6 +454,9 @@ async function deshacer(id) {
     if (!lote || lote.stock < m.cantidad) { toast('No se puede deshacer: ese lote ya no tiene esas unidades.', 4000); return; }
   }
   const pend = await idb.get('pendientes', id);
+  // Si se está enviando ahora mismo, el servidor puede estar guardándolo: borrarlo aquí lo dejaría
+  // en la hoja sin poder deshacerlo. Se espera a que termine el envío.
+  if (pend && sincronizando) { toast('Se está enviando ahora mismo. Espera unos segundos y vuelve a pulsar Deshacer.', 4500); return; }
   if (pend) {
     await idb.borrar('pendientes', id);
     await idb.borrar('historial', id);
@@ -734,42 +737,65 @@ function puntuarLinea(o) {
 }
 
 /* ---------- Open Food Facts (desde el móvil, si hay red) ---------- */
-async function consultarOFF(codigo) {
-  if (!navigator.onLine) { $('f-off').textContent = 'Sin conexión: se buscará en Open Food Facts al sincronizar.'; return; }
-  $('f-off').textContent = 'Buscando en Open Food Facts…';
+// Una consulta a Open Food Facts. Devuelve { estado, prod, nombre }:
+//  'ok'       → hay ficha con nombre
+//  'parcial'  → hay ficha pero sin nombre (puede traer marca, contenido o foto)
+//  'no'       → no existe (HTTP 404 o respuesta sin producto)
+//  'temporal' → no se sabe (sin respuesta, HTTP 429/5xx…): hay que reintentar más tarde
+async function pedirOFF(codigo, ms, conCategorias) {
   const ctrl = new AbortController();
-  const t = setTimeout(function () { ctrl.abort(); }, 6000);
+  const t = setTimeout(function () { ctrl.abort(); }, ms);
   try {
     const url = 'https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(codigo) +
-      '.json?fields=product_name,product_name_es,brands,product_quantity,product_quantity_unit,image_front_small_url,categories_tags';
+      '.json?fields=product_name,product_name_es,generic_name,generic_name_es,brands,product_quantity,product_quantity_unit,image_front_small_url' +
+      (conCategorias ? ',categories_tags' : '');
     const r = await fetch(url, { signal: ctrl.signal });
-    const j = r.ok ? await r.json() : null;
-    if (!actual || actual.codigo !== codigo) return; // el usuario ya cambió de producto
-    const prod = j && j.status === 1 ? j.product : null;
-    const nombre = prod ? (prod.product_name_es || prod.product_name || '') : '';
-    if (!nombre) { $('f-off').textContent = 'No está en Open Food Facts. Escribe el nombre o haz una foto.'; return; }
-    if (!$('p-nombre').value) $('p-nombre').value = nombre;
-    const marca = String(prod.brands || '').split(',')[0].trim();
-    if (!$('p-marca').value && marca) $('p-marca').value = marca;
-    const cont = convertirCantidad(prod.product_quantity, prod.product_quantity_unit);
-    if (!$('p-contenido').value && cont.contenido) { $('p-contenido').value = String(cont.contenido).replace('.', ','); $('p-unidad').value = cont.unidad; }
-    if (prod.image_front_small_url) actual.fotoUrl = prod.image_front_small_url;
-    actual.offTags = (prod.categories_tags || []).map(String);
-    $('f-nombre').textContent = $('p-nombre').value + ($('p-marca').value ? ' · ' + $('p-marca').value : '');
-    $('f-off').textContent = '✓ Datos de Open Food Facts. Revisa el nombre y la categoría.';
-    pintarFoto();
-    pintarCategoriasFicha();
-    pintarLineas();
+    if (r.status === 404) return { estado: 'no', http: 404 };
+    if (!r.ok) return { estado: 'temporal', http: r.status };
+    const j = await r.json();
+    const prod = j && j.status === 1 && j.product ? j.product : null;
+    if (!prod) return { estado: 'no', http: r.status };
+    const nombre = String(prod.product_name_es || prod.product_name || prod.generic_name_es || prod.generic_name || '').trim();
+    return { estado: nombre ? 'ok' : 'parcial', prod: prod, nombre: nombre, http: r.status };
   } catch (e) {
-    if (actual && actual.codigo === codigo) $('f-off').textContent = 'Open Food Facts no responde; se buscará al sincronizar.';
+    return { estado: 'temporal', http: 0 };
   } finally {
     clearTimeout(t);
   }
 }
 
+async function consultarOFF(codigo) {
+  if (!navigator.onLine) { $('f-off').textContent = 'Sin conexión: se buscará en Open Food Facts al sincronizar.'; return; }
+  $('f-off').textContent = 'Buscando en Open Food Facts…';
+  const x = await pedirOFF(codigo, 6000, true);
+  if (!actual || actual.codigo !== codigo) return; // el usuario ya cambió de producto
+  if (x.estado === 'temporal') {
+    $('f-off').textContent = 'Open Food Facts no responde ahora' + (x.http ? ' (error ' + x.http + ')' : '') + '; se volverá a buscar al sincronizar. Puedes escribir el nombre.';
+    return;
+  }
+  if (x.estado === 'no') { $('f-off').textContent = 'No está en Open Food Facts. Escribe el nombre o haz una foto.'; return; }
+  const prod = x.prod;
+  if (x.nombre && !$('p-nombre').value) $('p-nombre').value = x.nombre;
+  const marca = String(prod.brands || '').split(',')[0].trim();
+  if (!$('p-marca').value && marca) $('p-marca').value = marca;
+  const cont = convertirCantidad(prod.product_quantity, prod.product_quantity_unit);
+  if (!$('p-contenido').value && cont.contenido) { $('p-contenido').value = String(cont.contenido).replace('.', ','); $('p-unidad').value = cont.unidad; }
+  if (prod.image_front_small_url) actual.fotoUrl = prod.image_front_small_url;
+  actual.offTags = (prod.categories_tags || []).map(String);
+  if ($('p-nombre').value) $('f-nombre').textContent = $('p-nombre').value + ($('p-marca').value ? ' · ' + $('p-marca').value : '');
+  $('f-off').textContent = x.estado === 'ok'
+    ? '✓ Datos de Open Food Facts. Revisa el nombre y la categoría.'
+    : 'Open Food Facts tiene la ficha pero sin nombre' + (marca ? ' (marca ' + marca + ')' : '') + '. Escribe el nombre.';
+  pintarFoto();
+  pintarCategoriasFicha();
+  pintarLineas();
+}
+
 // Productos con código de barras que siguen sin nombre (escaneados sin red, o el servidor no llegó
-// a buscarlos: solo consulta 5 por envío). Se buscan desde el móvil, como máximo 10 por vez y cada
-// código una vez por semana. Solo rellena lo vacío; lo encontrado se envía como cambio de ficha.
+// a buscarlos: solo consulta 5 por envío). Se buscan desde el móvil, como máximo 10 por vez.
+// Un código solo se aparca una semana si Open Food Facts contesta que no existe o que no tiene
+// nombre; ante un error temporal (sin respuesta, 429, 503…) se reintenta en la próxima sincronización.
+// Solo rellena lo vacío; lo encontrado (aunque sea solo marca, contenido o foto) se envía como cambio de ficha.
 async function completarDesdeOFF() {
   if (!navigator.onLine) return false;
   const semana = 7 * 24 * 3600 * 1000, ahora = Date.now();
@@ -777,36 +803,32 @@ async function completarDesdeOFF() {
     const p = catalogo[c] || {};
     return !p.nombre && /^\d{8,14}$/.test(c) && !(offIntentados[c] && ahora - new Date(offIntentados[c]).getTime() < semana);
   }).slice(0, 10);
-  let encontrados = 0;
+  let encontrados = 0, consultados = 0, fallos = 0;
   for (const c of codigos) {
-    offIntentados[c] = new Date().toISOString();
-    const ctrl = new AbortController();
-    const t = setTimeout(function () { ctrl.abort(); }, 8000);
-    try {
-      const url = 'https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(c) +
-        '.json?fields=product_name,product_name_es,brands,product_quantity,product_quantity_unit,image_front_small_url';
-      const r = await fetch(url, { signal: ctrl.signal });
-      const j = r.ok ? await r.json() : null;
-      const prod = j && j.status === 1 ? j.product : null;
-      const nombre = prod ? String(prod.product_name_es || prod.product_name || '').trim() : '';
-      if (!nombre) continue;
-      const p = catalogo[c] || {};
-      const cambios = { nombre: nombre.slice(0, 120) };
-      const marca = String(prod.brands || '').split(',')[0].trim();
-      if (!p.marca && marca) cambios.marca = marca.slice(0, 60);
-      const cont = convertirCantidad(prod.product_quantity, prod.product_quantity_unit);
-      if (!p.contenido && cont.contenido) { cambios.contenido = cont.contenido; cambios.unidad = cont.unidad; }
-      if (!p.foto_url && prod.image_front_small_url) cambios.foto_url = prod.image_front_small_url;
-      prodPend[c] = Object.assign({ codigo: c }, prodPend[c] || {}, cambios);
-      catalogo[c] = Object.assign({}, p, cambios);
-      encontrados++;
-    } catch (e) {
-      delete offIntentados[c]; // sin respuesta: se reintenta en la próxima sincronización
-    } finally {
-      clearTimeout(t);
+    const x = await pedirOFF(c, 8000, false);
+    if (x.estado === 'temporal') {
+      // Un fallo suelto no frena a los demás; dos seguidos indican que el servicio está caído o pide ir más despacio
+      if (++fallos >= 2) break;
+      continue;
     }
+    fallos = 0;
+    consultados++;
+    offIntentados[c] = new Date().toISOString();
+    if (x.estado === 'no') continue;
+    const prod = x.prod, p = catalogo[c] || {};
+    const cambios = {};
+    if (x.nombre) cambios.nombre = x.nombre.slice(0, 120);
+    const marca = String(prod.brands || '').split(',')[0].trim();
+    if (!p.marca && marca) cambios.marca = marca.slice(0, 60);
+    const cont = convertirCantidad(prod.product_quantity, prod.product_quantity_unit);
+    if (!p.contenido && cont.contenido) { cambios.contenido = cont.contenido; cambios.unidad = cont.unidad; }
+    if (!p.foto_url && prod.image_front_small_url) cambios.foto_url = prod.image_front_small_url;
+    if (!Object.keys(cambios).length) continue;
+    prodPend[c] = Object.assign({ codigo: c }, prodPend[c] || {}, cambios);
+    catalogo[c] = Object.assign({}, p, cambios);
+    encontrados++;
   }
-  if (codigos.length) await idb.poner('kv', offIntentados, 'offIntentados');
+  if (consultados) await idb.poner('kv', offIntentados, 'offIntentados');
   if (encontrados) {
     await idb.poner('kv', prodPend, 'prodPend');
     await idb.poner('kv', catalogo, 'catalogo');
@@ -1586,8 +1608,9 @@ function aportePorEnvase(p, unidadObjetivo) {
   const uo = normalizar(unidadObjetivo), up = normalizar(p.unidad), c = numero(p.contenido);
   const tabla = uo in UNIDADES_PESO ? UNIDADES_PESO : uo in UNIDADES_VOLUMEN ? UNIDADES_VOLUMEN : null;
   if (tabla) return up in tabla && c > 0 ? c * tabla[up] / tabla[uo] : null;
-  // Unidades contables (uds, rollos, paquetes…): un pack de 12 rollos con unidad «rollos» cuenta 12
-  if (up === uo && up !== 'uds' && c > 0) return c;
+  // Unidades contables (uds, rollos, paquetes…): un pack cuenta por lo que trae dentro si la ficha lo dice
+  // con la misma unidad de la línea («12 rollos») o en unidades («6 uds»: pack de 6 briks, blíster de 12 pilas)
+  if ((up === uo || up === 'uds') && c > 0) return c;
   return 1;
 }
 
@@ -1693,6 +1716,24 @@ function textoListaMarcar(r) {
   return filas.join('\n');
 }
 
+// Errores de la pestaña Objetivos de la hoja que hacen que algo no cuente sin avisar
+function problemasObjetivos() {
+  const avisos = [], vistos = {}, repetidos = [];
+  objetivos.forEach(function (o) {
+    if (!o.id) return;
+    if (vistos[o.id] && repetidos.indexOf(o.id) < 0) repetidos.push(o.id);
+    vistos[o.id] = true;
+  });
+  if (repetidos.length) avisos.push('id repetido: ' + repetidos.join(', ') + ' (cada línea necesita un id distinto)');
+  const ests = valores('ESTANCIA', '', true);
+  if (ests.length) {
+    almacenesObjetivos().forEach(function (a) {
+      if (!ests.some(function (e) { return mismoSitio(e, a); })) avisos.push('«' + a + '» no es una estancia: créala en Ajustes → Estancias o corrige la columna almacen');
+    });
+  }
+  return avisos;
+}
+
 function almacenesObjetivos() {
   const v = [];
   objetivos.forEach(function (o) { if (o.almacen && v.indexOf(o.almacen) < 0) v.push(o.almacen); });
@@ -1747,6 +1788,11 @@ function pintarObjetivos() {
             ' <span class="muted">· ' + esc(p.categoria ? bonito(p.categoria) : 'sin categoría') + ' · ' + x.envases + ' uds</span></span><button>Asignar</button></div>';
         }).join('') + '</div>';
     }
+  }
+  const problemas = problemasObjetivos();
+  if (problemas.length) {
+    av = '<div class="tarjeta" id="o-problemas" style="border-left:5px solid var(--rojo);margin-bottom:8px"><b>⚠️ Revisa la pestaña Objetivos de la hoja</b>' +
+      problemas.map(function (t) { return '<div class="lote">' + esc(t) + '</div>'; }).join('') + '</div>' + av;
   }
   $('o-avisos').innerHTML = av;
   if ($('o-ver-sin')) $('o-ver-sin').onclick = function () { objVista.verSinLinea = !objVista.verSinLinea; pintarObjetivos(); };

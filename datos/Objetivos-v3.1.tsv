@@ -1,7 +1,10 @@
 id	categoria	descripcion	cantidad_objetivo	unidad	almacen	notas
-TA-01	BEBIDA	Agua embotellada, garrafa 6,25 L	17	uds	Trastero Ávila	~3 L/persona/día. Mínimo intocable: 8 garrafas (agua de la Caja 72 h)
-TA-02	BEBIDA	Leche UHT	20	litros	Trastero Ávila	
-TA-03	BEBIDA	Zumos (brik 1 L)	8	uds	Trastero Ávila	
+TA-01	BEBIDA	Agua embotellada, garrafa 6,25 L	106,25	litros	Trastero Ávila	~3 L/persona/día. Mínimo intocable: 50 L (8 garrafas, el agua de la Caja 72 h)
+TA-02	BEBIDA	Leche UHT entera	6	litros	Trastero Ávila	Ajustar según consumo
+TA-49	BEBIDA	Leche UHT desnatada	6	litros	Trastero Ávila	Ajustar según consumo
+TA-50	BEBIDA	Bebida de almendras	6	litros	Trastero Ávila	No cuenta como leche en el cálculo de energía
+TA-03	BEBIDA	Bifrutas (brik 200 ml)	18	uds	Trastero Ávila	3 packs de 6
+TA-46	BEBIDA	Batidos (brik 200 ml)	18	uds	Trastero Ávila	3 packs de 6
 TA-04	POTABILIZAR	Lejía apta para desinfección de agua de bebida	1	litros	Trastero Ávila	Plan B si se acaba el agua
 TA-05	POTABILIZAR	Filtro de agua	1	uds	Trastero Ávila	Modelo pendiente
 TA-06	PLATOS_PREPARADOS	Platos preparados en lata (fabada, lentejas, callos…)	15	uds	Trastero Ávila	Antes 10 (revisión 8 nov 2026)
@@ -29,10 +32,13 @@ TA-27	MENAJE_Y_GAS	Mechero	2	uds	Trastero Ávila	En bolsa estanca
 TA-28	MENAJE_Y_GAS	Cerillas (caja)	2	uds	Trastero Ávila	En bolsa estanca
 TA-29	MENAJE_Y_GAS	Desechables (pack)	5	uds	Trastero Ávila	1 pack por persona
 TA-30	ENERGIA	Pilas AA	24	uds	Trastero Ávila	Probablemente ya cubierto (contar)
+TA-45	ENERGIA	Pilas AAA	36	uds	Trastero Ávila	Frontales y radio. Probablemente ya cubierto (contar)
 TA-31	HIGIENE	Papel higiénico	16	rollos	Trastero Ávila	
 TA-32	HIGIENE	Toallitas húmedas	4	paquetes	Trastero Ávila	
 TA-33	HIGIENE	Gel hidroalcohólico	2	uds	Trastero Ávila	
 TA-34	HIGIENE	Pasta de dientes / gel / champú	3	uds	Trastero Ávila	1 de cada
+TA-47	HIGIENE	Cepillo de dientes	5	uds	Trastero Ávila	1 por persona
+TA-48	HIGIENE	Jabón de manos	2	uds	Trastero Ávila	Si no hay agua, gel hidroalcohólico (TA-33)
 TA-35	HIGIENE	Higiene femenina (paquete ~20 uds)	4	paquetes	Trastero Ávila	2 ciclos; 1 paquete por persona y ciclo
 TA-36	LIMPIEZA	Bolsas de basura	2	rollos	Trastero Ávila	
 TA-37	LIMPIEZA	Papel de cocina	4	rollos	Trastero Ávila	
@@ -43,13 +49,13 @@ TA-41	BOTIQUIN	Analgésicos / antitérmicos (envases)	4	uds	Trastero Ávila	2 de
 TA-42	BOTIQUIN	Suero oral (caja)	2	uds	Trastero Ávila	
 TA-43	BOTIQUIN	Termómetro	1	uds	Trastero Ávila	Con pilas de repuesto
 TA-44	BOTIQUIN	Tiritas, gasas, desinfectante	3	uds	Trastero Ávila	1 de cada
-TA-45	ENERGIA	Pilas AAA	36	uds	Trastero Ávila	Frontales y radio. Probablemente ya cubierto (contar)
 CJ-01	PLATOS_PREPARADOS	Platos preparados en lata (comestibles fríos)	6	uds	Caja 72 h	2 latas por comida × 3 comidas
 CJ-02	CONSERVAS	Legumbre cocida	6	uds	Caja 72 h	Mejor lata o brik que cristal
 CJ-03	CONSERVAS	Atún / sardinas en lata	9	uds	Caja 72 h	
 CJ-04	CONSERVAS	Compotas o fruta en bolsita	10	uds	Caja 72 h	Para los niños
-CJ-05	BEBIDA	Leche UHT	6	litros	Caja 72 h	
-CJ-06	BEBIDA	Zumos individuales (brik 200 ml)	10	uds	Caja 72 h	
+CJ-05	BEBIDA	Leche UHT entera	4	litros	Caja 72 h	Más energía con el mismo peso
+CJ-06	BEBIDA	Bifrutas (brik 200 ml)	6	uds	Caja 72 h	1 pack
+CJ-22	BEBIDA	Batidos (brik 200 ml)	6	uds	Caja 72 h	1 pack
 CJ-07	DESAYUNO	Galletas	1	kg	Caja 72 h	
 CJ-08	DESAYUNO	Cereales	0,5	kg	Caja 72 h	
 CJ-09	DESAYUNO	Crema de cacao o cacahuete	1	uds	Caja 72 h	
@@ -63,12 +69,14 @@ CJ-16	LIMPIEZA	Bolsas de basura	1	rollos	Caja 72 h
 CJ-17	HIGIENE	Toallitas húmedas	1	paquetes	Caja 72 h	
 CJ-18	HIGIENE	Gel hidroalcohólico	1	uds	Caja 72 h	
 CJ-19	ENERGIA	Linterna o frontal + pilas de repuesto	1	uds	Caja 72 h	Para que la caja no dependa de otra estancia
+CJ-20	BEBIDA	Leche UHT desnatada	1	litros	Caja 72 h	
+CJ-21	BEBIDA	Bebida de almendras	1	litros	Caja 72 h	
 PE-01	BEBIDA	Agua en brik o botella de 0,5 L	10	uds	Peugeot 5008	1 L/persona para 24 h; rotar cada 6 meses
 PE-02	SNACKS	Ración de emergencia de larga duración (~2.400 kcal)	2	uds	Peugeot 5008	Marca pendiente
 PE-03	BOTIQUIN	Botiquín de coche (tiritas, gasas, desinfectante, analgésicos)	1	uds	Peugeot 5008	
 PE-04	EQUIPO	Manta térmica	5	uds	Peugeot 5008	1 por persona
 PE-05	EQUIPO	Manta de verdad (polar)	2	uds	Peugeot 5008	Invierno
-PE-06	EQUIPO	Chaleco reflectante	2	uds	Peugeot 5008	
+PE-06	EQUIPO	Chaleco reflectante	5	uds	Peugeot 5008	
 PE-07	EQUIPO	Cadenas o fundas textiles de nieve	1	juego	Peugeot 5008	Medida de neumático pendiente
 PE-08	EQUIPO	Rasqueta + guantes	1	uds	Peugeot 5008	
 PE-09	ENERGIA	Frontal	2	uds	Peugeot 5008	AAA, como las de casa
@@ -92,7 +100,7 @@ MZ-11	EQUIPO	Aceite de motor (1 L) + refrigerante	1	uds	Mazda 3	Especificación 
 MZ-12	ENERGIA	Frontal + pilas AAA de repuesto	1	uds	Mazda 3	
 MZ-13	ENERGIA	Powerbank + cable + cargador de mechero	1	uds	Mazda 3	
 MZ-14	HIGIENE	Papel higiénico + toallitas + gel hidroalcohólico	3	uds	Mazda 3	1 de cada
-SO-01	BEBIDA	Agua embotellada, garrafa 6,25 L	8	uds	Sotalbo	Pendiente: bajar si hay agua de red fiable
+SO-01	BEBIDA	Agua embotellada, garrafa 6,25 L	50	litros	Sotalbo	Pendiente: bajar si hay agua de red fiable
 SO-02	POTABILIZAR	Lejía apta para agua de bebida	1	litros	Sotalbo	
 SO-03	POTABILIZAR	Filtro de agua		uds	Sotalbo	Pendiente: decidir si va aquí o en Ávila
 SO-04	PLATOS_PREPARADOS	Platos preparados en lata	8	uds	Sotalbo	
