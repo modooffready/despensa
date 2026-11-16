@@ -98,7 +98,7 @@ test('pantalla Objetivos: avance por línea y lista de la compra', async functio
     assert.deepStrictEqual(caja, { tiene: 4, eq: 'TA-08', sinLinea: 0, lineas: 3 });
 
     // Pantalla
-    await p.click('#t-stock'); await p.click('#s-objetivos');
+    await p.click('#t-objetivos');
     await p.waitForFunction(function () { return document.getElementById('o-resumen').textContent.length > 0; });
     const resumen = await p.textContent('#o-resumen');
     assert.match(resumen, /1 de 9 objetivos completos/);
@@ -107,7 +107,8 @@ test('pantalla Objetivos: avance por línea y lista de la compra', async functio
     const conservas = await p.textContent('#o-lista');
     assert.match(conservas, /Atún \/ sardinas \/ caballa en lata\s*12 \/ 30/);
     assert.match(conservas, /Sardinas · asignar/);
-    await p.click('#o-m-compra');
+    await p.click('#t-compra');
+    await p.waitForSelector('#o-compra:not(.oculto)');
     const lista = await p.textContent('#o-texto');
     assert.match(lista, /Agua embotellada, garrafa 6,25 L: faltan 12 uds/);
     assert.match(lista, /Leche UHT: faltan 14 litros/);
@@ -117,7 +118,8 @@ test('pantalla Objetivos: avance por línea y lista de la compra', async functio
     assert.match(marcar, /^Agua embotellada, garrafa 6,25 L — 12 uds$/m);
     assert.doesNotMatch(marcar, /\*|Bebida|Lista de la compra/);
     // Asignar línea desde Objetivos abre la ficha y vuelve a Objetivos
-    await p.click('#o-m-categorias');
+    await p.click('#t-objetivos');
+    await p.waitForSelector('.o-editar[data-c="S"]');
     await p.click('.o-editar[data-c="S"]');
     await p.waitForSelector('#pantalla-formulario:not(.oculto)');
     assert.ok(await p.isVisible('#pantalla-formulario'));
@@ -125,7 +127,7 @@ test('pantalla Objetivos: avance por línea y lista de la compra', async functio
     await p.waitForSelector('#pantalla-objetivos:not(.oculto)');
     assert.ok(await p.isVisible('#pantalla-objetivos'));
     assert.deepStrictEqual(errores, []);
-    if (process.env.CAPTURAS) { await p.click('.o-cab[data-cat="BEBIDA"]'); await p.screenshot({ path: '/tmp/objetivos.png', fullPage: true }); await p.click('#o-m-compra'); await p.screenshot({ path: '/tmp/compra.png', fullPage: true }); }
+    if (process.env.CAPTURAS) { await p.click('.o-cab[data-cat="BEBIDA"]'); await p.screenshot({ path: '/tmp/objetivos.png', fullPage: true }); await p.click('#t-compra'); await p.screenshot({ path: '/tmp/compra.png', fullPage: true }); }
   } finally {
     await navegador.close(); srv.close();
   }

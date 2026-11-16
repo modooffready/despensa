@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.9.4';
+const VERSION = '2.10.0';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -99,7 +99,7 @@ function toast(msg, ms) {
 
 // ---------- Navegación y botón atrás de Android ----------
 // Se mantiene una entrada "trampa" en el historial: el botón atrás la consume y la app decide a dónde volver.
-let pantallaActual = 'inicio', origenFormulario = 'inicio', trampa = false;
+let pantallaActual = 'inicio', origenFormulario = 'inicio', origenEscaner = 'inicio', trampa = false;
 function ponerTrampa() { if (!trampa) { try { history.pushState({ despensa: 1 }, ''); trampa = true; } catch (e) { /* sin historial */ } } }
 function volverA(origen) {
   if (origen === 'revision') { mostrar('revision'); pintarRevision(); return; }
@@ -113,7 +113,8 @@ function atras() {
   switch (pantallaActual) {
     case 'inicio': return; // siguiente "atrás": sale de la app
     case 'formulario': volverA(origenFormulario); break;
-    case 'informe': case 'objetivos': abrirStock(); break;
+    case 'informe': abrirStock(); break;
+    case 'escaner': volverA(origenEscaner); break;
     case 'ajustes':
       if (!ajustes.url || !ajustes.token || !ajustes.usuario) { toast('Rellena y guarda los ajustes primero'); ponerTrampa(); return; }
       mostrar('inicio'); break;
@@ -129,15 +130,27 @@ function mostrar(nombre) {
     $('pantalla-' + p).classList.toggle('oculto', p !== nombre);
   });
   if (nombre !== 'escaner') pararEscaner();
-  // Pestañas Registrar / Stock: visibles en esas dos pantallas, con el color de la activa
-  const conPestanas = nombre === 'inicio' || nombre === 'stock';
-  $('pestanas').classList.toggle('oculto', !conPestanas);
-  $('pestanas').classList.toggle('stock', nombre === 'stock');
-  $('cab').style.background = nombre === 'stock' ? '#8a5a2b' : '';
-  $('t-inicio').classList.toggle('activo', nombre === 'inicio');
-  $('t-stock').classList.toggle('activo', nombre === 'stock');
+  pintarNav();
   if ($('ficha-sheet')) $('ficha-sheet').classList.remove('on');
   window.scrollTo(0, 0);
+}
+
+// Barra de abajo (Inicio, Stock, Objetivos, Compra): visible en las pantallas principales, con la sección activa marcada.
+// Objetivos y Compra son la misma pantalla en dos modos. El botón flotante de Escanear acompaña a la barra
+// salvo en Inicio, que ya tiene el botón grande.
+const PANTALLAS_CON_BARRA = ['inicio', 'stock', 'objetivos', 'buscar'];
+function pintarNav() {
+  const conBarra = PANTALLAS_CON_BARRA.indexOf(pantallaActual) >= 0;
+  $('pestanas').classList.toggle('oculto', !conBarra);
+  document.body.classList.toggle('con-nav', conBarra);
+  $('fab-escanear').classList.toggle('oculto', !conBarra || pantallaActual === 'inicio');
+  const enCompra = pantallaActual === 'objetivos' && objVista.modo === 'compra';
+  const activa = { 't-inicio': pantallaActual === 'inicio', 't-stock': pantallaActual === 'stock',
+    't-objetivos': pantallaActual === 'objetivos' && !enCompra, 't-compra': enCompra };
+  Object.keys(activa).forEach(function (id) {
+    $(id).classList.toggle('activo', activa[id]);
+    if (activa[id]) $(id).setAttribute('aria-current', 'page'); else $(id).removeAttribute('aria-current');
+  });
 }
 
 async function guardarAjustesLocales() { await idb.poner('kv', ajustes, 'config'); }
@@ -267,10 +280,9 @@ function enlazarEventos() {
   $('btn-caducidades').onclick = function () { soloCaducan = true; stockGrupo = ''; stockModo = 'TODO'; abrirStock(); };
   $('s-caducan').onclick = function () { soloCaducan = !soloCaducan; pintarStock(); };
   $('s-informe').onclick = abrirInforme;
-  $('s-objetivos').onclick = abrirObjetivos;
-  $('o-volver').onclick = abrirStock;
-  $('o-m-categorias').onclick = function () { objVista.modo = 'categorias'; pintarObjetivos(); };
-  $('o-m-compra').onclick = function () { objVista.modo = 'compra'; pintarObjetivos(); };
+  $('t-objetivos').onclick = function () { objVista.modo = 'categorias'; abrirObjetivos(); };
+  $('t-compra').onclick = function () { objVista.modo = 'compra'; abrirObjetivos(); };
+  $('fab-escanear').onclick = abrirEscaner;
   $('o-compartir').onclick = function () { compartirLista(false); };
   $('o-keep').onclick = function () { compartirLista(true); };
   $('o-copiar').onclick = copiarLista;
@@ -298,7 +310,7 @@ function enlazarEventos() {
   }
   $('btn-codigo-manual').onclick = buscarDesdeInicio;
   $('codigo-manual').onkeydown = function (e) { if (e.key === 'Enter') buscarDesdeInicio(); };
-  $('btn-cancelar-escaner').onclick = function () { mostrar('inicio'); };
+  $('btn-cancelar-escaner').onclick = function () { volverA(origenEscaner); };
   $('btn-linterna').onclick = alternarLinterna;
 
   $('f-editar').onclick = function () { $('f-ficha').classList.toggle('oculto'); };
@@ -500,6 +512,7 @@ async function abrirEscaner() {
     $('codigo-manual').focus();
     return;
   }
+  if (PANTALLAS_CON_BARRA.indexOf(pantallaActual) >= 0) origenEscaner = pantallaActual;
   mostrar('escaner');
   $('txt-escaner').textContent = 'Apunta al código de barras';
   try {
@@ -571,7 +584,7 @@ async function abrirFormulario(codigo, opciones_) {
   const op = opciones_ || {};
   // De dónde venimos, para volver allí al guardar, cancelar o pulsar atrás
   if (['stock', 'buscar', 'inicio', 'objetivos'].indexOf(pantallaActual) >= 0) origenFormulario = pantallaActual;
-  else if (pantallaActual === 'escaner') origenFormulario = 'inicio';
+  else if (pantallaActual === 'escaner') origenFormulario = origenEscaner; // se vuelve a la pantalla desde la que se pulsó Escanear
   pendientesCache = await idb.todos('pendientes');
   const p = catalogo[codigo] || {};
   actual = { codigo: codigo, existe: !!catalogo[codigo], sinCodigo: !!op.sinCodigo || /^INT-/.test(codigo),
@@ -1761,7 +1774,8 @@ function pintarObjetivos() {
     return '<button class="chip' + (a === objVista.almacen ? ' activo' : '') + '" data-a="' + esc(a) + '">' + esc(a) + '</button>';
   }).join('') : '';
   cada($('o-almacenes').children, function (b) { b.onclick = function () { objVista.almacen = b.dataset.a; pintarObjetivos(); }; });
-  ['categorias', 'compra'].forEach(function (m) { $('o-m-' + m).classList.toggle('activo', objVista.modo === m); });
+  $('o-titulo').textContent = objVista.modo === 'compra' ? '🛒 Lista de la compra' : '🎯 Objetivos';
+  pintarNav();
 
   if (!objetivos.length) {
     $('o-resumen').textContent = 'No hay objetivos descargados. Rellena la pestaña Objetivos de la hoja y sincroniza.';

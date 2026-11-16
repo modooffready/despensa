@@ -237,3 +237,81 @@ test('v2.9.4: subcategoría «Varios» y textos sin la palabra «línea»', asyn
     assert.deepStrictEqual(a.errores, []);
   } finally { await a.cerrar(); }
 });
+
+test('v2.10.0: barra de abajo con la sección activa y botón flotante de Escanear', async function () {
+  const hoy = new Date();
+  const mes = function (d) { const f = new Date(hoy.getFullYear(), hoy.getMonth() + d, 1); return f.getFullYear() + '-' + String(f.getMonth() + 1).padStart(2, '0'); };
+  const fila = function (id, cat, desc, cant, uni) { return { id: id, categoria: cat, descripcion: desc, cantidad_objetivo: cant, unidad: uni, almacen: T, notas: '' }; };
+  const datos = { ok: true, version: 2.7, aceptados: [], rechazados: [],
+    config: CONFIG.concat([{ tipo: 'CATEGORIA', valor: 'CONSERVAS', padre: 'DESPENSA', activo: true }]),
+    objetivos: [fila('TA-01', 'BEBIDA', 'Agua embotellada, garrafa 6,25 L', '106,25', 'litros'), fila('TA-02', 'BEBIDA', 'Leche UHT entera', 6, 'litros'),
+      fila('TA-08', 'CONSERVAS', 'Atún / sardinas / caballa en lata', 30, 'uds'), fila('TA-07', 'CONSERVAS', 'Legumbre cocida en bote', 20, 'uds')],
+    productos: [{ codigo: 'G', nombre: 'Agua Font Vella 6,25 l', marca: 'Font Vella', categoria: 'BEBIDA', linea_objetivo: 'TA-01', unidad: 'litros', contenido: 6.25 },
+      { codigo: 'L', nombre: 'Leche entera', marca: 'Carrefour', categoria: 'BEBIDA', linea_objetivo: 'TA-02', unidad: 'litros', contenido: 1 },
+      { codigo: 'A', nombre: 'Bonito del norte en migas', categoria: 'CONSERVAS', linea_objetivo: 'TA-08', unidad: 'g', contenido: 80 },
+      { codigo: 'M', nombre: 'Mejillones en escabeche', categoria: 'CONSERVAS', unidad: 'g', contenido: 115 }],
+    stock: [['G', mes(22), 7], ['L', mes(5), 6], ['A', mes(30), 4], ['M', mes(1), 2]].map(function (r) { return { codigo: r[0], caducidad: r[1], almacen: T, estante: 'Estante 5', stock: r[2] }; }) };
+  const a = await montar({
+    off: function (c, rt) { return json(rt, { status: 0 }, 404); },
+    servidor: function (b, rt) { return json(rt, datos); }
+  });
+  try {
+    const p = a.p;
+    await p.evaluate(function () { return guardarAjustes(); });
+    await p.waitForFunction(function () { return !sincronizando && objetivos.length === 4; });
+    const estado = function () {
+      return p.evaluate(function () {
+        const v = function (id) { return !document.getElementById(id).classList.contains('oculto'); };
+        return { pantalla: pantallaActual, barra: v('pestanas'), fab: v('fab-escanear'),
+          activa: Array.prototype.map.call(document.querySelectorAll('#pestanas button.activo'), function (b) { return b.id; }).join(','),
+          titulo: document.getElementById('o-titulo').textContent };
+      });
+    };
+    const foto = async function (n) { if (process.env.CAPTURAS) { await p.waitForTimeout(250); await p.screenshot({ path: '/tmp/nav-' + n + '.png' }); } };
+    let e = await estado();
+    assert.deepStrictEqual([e.pantalla, e.barra, e.fab, e.activa], ['inicio', true, false, 't-inicio'], 'Inicio: barra visible, sin botón flotante (ya tiene el grande)');
+    await foto('1-inicio');
+    await p.click('#t-stock');
+    await p.waitForSelector('#pantalla-stock:not(.oculto)');
+    e = await estado();
+    assert.deepStrictEqual([e.pantalla, e.barra, e.fab, e.activa], ['stock', true, true, 't-stock']);
+    await foto('2-stock');
+    await p.click('#t-objetivos');
+    await p.waitForSelector('#pantalla-objetivos:not(.oculto)');
+    e = await estado();
+    assert.deepStrictEqual([e.pantalla, e.activa, e.titulo], ['objetivos', 't-objetivos', '🎯 Objetivos']);
+    assert.ok(await p.isVisible('#o-lista'));
+    await p.click('.o-cab[data-cat="CONSERVAS"]');
+    await foto('3-objetivos');
+    await p.click('#t-compra');
+    await p.waitForSelector('#o-compra:not(.oculto)');
+    e = await estado();
+    assert.deepStrictEqual([e.pantalla, e.activa, e.titulo, e.fab], ['objetivos', 't-compra', '🛒 Lista de la compra', true]);
+    assert.match(await p.textContent('#o-texto'), /Atún \/ sardinas \/ caballa en lata: faltan 26 uds/);
+    await foto('4-compra');
+    // Desde Compra, abrir una ficha para editar: la barra y el botón flotante desaparecen; al cancelar se vuelve a Compra
+    await p.evaluate(function () { return abrirFormulario('M', { editar: true }); });
+    e = await estado();
+    assert.deepStrictEqual([e.pantalla, e.barra, e.fab], ['formulario', false, false]);
+    await p.click('#f-cancelar');
+    await p.waitForSelector('#pantalla-objetivos:not(.oculto)');
+    e = await estado();
+    assert.strictEqual(e.activa, 't-compra', 'se conserva la sección en la que se estaba');
+    // Escanear desde Stock y cancelar: vuelve a Stock, no a Inicio
+    await p.click('#t-stock');
+    await p.waitForSelector('#pantalla-stock:not(.oculto)');
+    await p.evaluate(function () { origenEscaner = pantallaActual; mostrar('escaner'); });
+    assert.deepStrictEqual((await estado()).barra, false);
+    await p.click('#btn-cancelar-escaner');
+    await p.waitForSelector('#pantalla-stock:not(.oculto)');
+    assert.strictEqual((await estado()).activa, 't-stock');
+    // El contenido no queda tapado por la barra: el final de la lista se puede ver por encima de ella
+    const tapa = await p.evaluate(function () {
+      window.scrollTo(0, document.body.scrollHeight);
+      const ult = document.querySelector('#s-lista .prod:last-child').getBoundingClientRect(), barra = document.getElementById('pestanas').getBoundingClientRect();
+      return ult.bottom <= barra.top;
+    });
+    assert.ok(tapa, 'el último producto queda por encima de la barra');
+    assert.deepStrictEqual(a.errores, []);
+  } finally { await a.cerrar(); }
+});
