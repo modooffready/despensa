@@ -24,6 +24,8 @@ function crearEntorno(opciones) {
       getId: function () { return this.id; },
       getDateCreated: function () { return this.creado; },
       setTrashed: function (v) { this.papelera = !!v; },
+      getThumbnail: function () { return null; },
+      getBlob: function () { return blob(this.bytes, this.nombre); },
       isTrashed: function () { return this.papelera; },
       getUrl: function () { return 'https://drive.google.com/file/d/' + this.id + 'xxxxxxxxxxxxxxxxxxxx/view'; },
       getParents: function () { return iterador([carpeta]); }
@@ -33,7 +35,8 @@ function crearEntorno(opciones) {
   }
   function crearCarpeta(nombre) {
     const c = {
-      nombre: nombre, archivos: [], hijas: [],
+      nombre: nombre, archivos: [], hijas: [], id: 'carpeta' + (++secuencia),
+      getId: function () { return this.id; },
       getName: function () { return this.nombre; },
       getFoldersByName: function (n) { return iterador(this.hijas.filter(function (h) { return h.nombre === n; })); },
       createFolder: function (n) { const h = crearCarpeta(n); this.hijas.push(h); return h; },
@@ -55,14 +58,18 @@ function crearEntorno(opciones) {
   const hojas = {};
   function crearHojaSim(nombre) {
     const h = {
-      nombre: nombre, celdas: [],
+      nombre: nombre, celdas: [], columnas: (opciones.columnas || {})[nombre] || 26,
+      getMaxColumns: function () { return this.columnas; },
+      insertColumnsAfter: function (desde, n) { this.columnas += n; },
       getName: function () { return nombre; },
       getLastRow: function () { return this.celdas.length; },
+      getLastColumn: function () { return this.celdas.reduce(function (m, r) { return Math.max(m, (r || []).length); }, 0); },
       getRange: function (fila, col, nf, nc) {
         const hoja = this;
         if (typeof fila === 'string') return { setNumberFormat: function () { return this; }, setValue: function () { return this; },
           setFontWeight: function () { return this; }, setFormula: function () { return this; } };
         nf = nf || 1; nc = nc || 1;
+        if (col + nc - 1 > hoja.columnas) throw new Error('Las coordenadas del intervalo están fuera de las dimensiones de la hoja.');
         return {
           getValues: function () {
             const res = [];
@@ -101,7 +108,7 @@ function crearEntorno(opciones) {
     SpreadsheetApp: { getActive: function () { return libro; }, getActiveSpreadsheet: function () { return libro; }, flush: function () {} },
     DriveApp: {
       getFileById: function (id) {
-        const buscar = function (c) { for (const a of c.archivos) if (a.id === id) return a; for (const h of c.hijas) { const r = buscar(h); if (r) return r; } return null; };
+        const buscar = function (c) { for (const a of c.archivos) if (a.id === id || a.id + 'xxxxxxxxxxxxxxxxxxxx' === id) return a; for (const h of c.hijas) { const r = buscar(h); if (r) return r; } return null; };
         const f = buscar(raiz); if (!f) throw new Error('no existe ' + id); return f;
       },
       getRootFolder: function () { return raiz; }

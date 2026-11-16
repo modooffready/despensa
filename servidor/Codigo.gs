@@ -1,5 +1,5 @@
 /**
- * DESPENSA — Backend en Google Apps Script (v2.6)
+ * DESPENSA — Backend en Google Apps Script (v2.7)
  *
  * Funciones para ejecutar a mano desde el editor:
  *  - configurar(): solo la primera vez (crea pestañas y TOKEN). YA HECHO.
@@ -16,24 +16,27 @@
  *  - activarCopiaSemanal(): v2.6, una vez. Programa la copia de seguridad de cada lunes y hace la primera.
  *  - copiaSeguridad(): hace una copia ahora mismo (la usa la programación semanal; también a mano).
  *  - desactivarCopiaSemanal(): quita la programación (las copias ya hechas se conservan).
+ *  - migrarV27(): una vez, al pasar a la v2.7 (columnas kcal_100g en Productos y esencial/minimo en Objetivos).
  *
  * Lo demás lo usa la app del móvil (doGet / doPost).
  */
 
 const HOJAS = {
   productos:   ['codigo', 'nombre', 'marca', 'categoria', 'unidad', 'foto_url', 'alta', 'fecha_alta',
-                'tipo', 'contenido', 'linea_objetivo', 'notas'],
+                'tipo', 'contenido', 'linea_objetivo', 'notas', 'kcal_100g'],
   movimientos: ['id', 'fecha_registro', 'fecha_movimiento', 'usuario', 'tipo', 'codigo',
                 'cantidad', 'delta', 'caducidad', 'almacen', 'estante', 'nota'],
+  // Objetivos se lee por cabecera (v2.7): estas son las columnas mínimas; las demás (esencial, minimo…) también se envían a la app
   objetivos:   ['id', 'categoria', 'descripcion', 'cantidad_objetivo', 'unidad', 'almacen', 'notas'],
-  config:      ['tipo', 'valor', 'padre', 'activo'] // padre = estancia (UBICACION) o modo DESPENSA/MATERIAL (CATEGORIA)
+  // padre = estancia (UBICACION), modo DESPENSA/MATERIAL (CATEGORIA) o fecha de la última revisión (REVISION)
+  config:      ['tipo', 'valor', 'padre', 'activo']
 };
 const NOMBRES = { productos: 'Productos', movimientos: 'Movimientos', stock: 'Stock',
                   objetivos: 'Objetivos', config: 'Config' };
 const TIPOS = ['ENTRADA', 'SALIDA', 'AJUSTE'];
-const TIPOS_CONFIG = ['CATEGORIA', 'ESTANCIA', 'UBICACION'];
+const TIPOS_CONFIG = ['CATEGORIA', 'ESTANCIA', 'UBICACION', 'REVISION'];
 // Campos de producto que la app puede modificar
-const CAMPOS_EDITABLES = ['nombre', 'marca', 'categoria', 'unidad', 'foto_url', 'tipo', 'contenido', 'linea_objetivo', 'notas'];
+const CAMPOS_EDITABLES = ['nombre', 'marca', 'categoria', 'unidad', 'foto_url', 'tipo', 'contenido', 'linea_objetivo', 'notas', 'kcal_100g'];
 
 const CONFIG_INICIAL = [
   ['CATEGORIA', 'BEBIDA'], ['CATEGORIA', 'POTABILIZAR'], ['CATEGORIA', 'PLATOS_PREPARADOS'],
@@ -149,6 +152,45 @@ function migrarV22() {
   Logger.log('Migración v2.2 terminada. ' + avisos.join('; ') + ' Publica una nueva versión.');
 }
 
+/* ============================================================
+ * MIGRACIÓN A LA V2.7 — ejecutar UNA vez
+ * Añade las cabeceras nuevas sin tocar ningún dato. Se puede repetir sin riesgo.
+ * ============================================================ */
+const COLUMNAS_OBJETIVOS_V27 = ['esencial', 'minimo'];
+
+function migrarV27() {
+  const ss = SpreadsheetApp.getActive();
+  const hechos = [];
+  // Productos: columna kcal_100g (energía por 100 g o 100 ml), justo después de notas
+  const prod = ss.getSheetByName(NOMBRES.productos);
+  asegurarColumnas_(prod, HOJAS.productos.length);
+  const iKcal = HOJAS.productos.indexOf('kcal_100g') + 1;
+  const actual = String(prod.getRange(1, iKcal).getValue()).trim();
+  if (!actual) { prod.getRange(1, iKcal).setValue('kcal_100g').setFontWeight('bold'); hechos.push('Productos: columna kcal_100g'); }
+  else if (actual !== 'kcal_100g') { Logger.log('ATENCIÓN: la columna ' + iKcal + ' de Productos ya se usa para «' + actual + '». No se ha tocado: avisa antes de seguir.'); return; }
+  // Objetivos: columnas esencial y minimo, al final de las que ya haya
+  const obj = ss.getSheetByName(NOMBRES.objetivos);
+  asegurarColumnas_(obj, HOJAS.objetivos.length);
+  const ancho = Math.max(obj.getLastColumn(), HOJAS.objetivos.length);
+  const cab = obj.getRange(1, 1, 1, ancho).getValues()[0].map(function (c) { return String(c).trim().toLowerCase(); });
+  let libre = cab.length;
+  while (libre > HOJAS.objetivos.length && !cab[libre - 1]) libre--;
+  COLUMNAS_OBJETIVOS_V27.forEach(function (c) {
+    if (cab.indexOf(c) >= 0) return;
+    libre++;
+    asegurarColumnas_(obj, libre);
+    obj.getRange(1, libre).setValue(c).setFontWeight('bold');
+    hechos.push('Objetivos: columna ' + c);
+  });
+  Logger.log('Migración v2.7 terminada. ' + (hechos.length ? 'Añadido → ' + hechos.join('; ') : 'No había nada que añadir.') + ' Ahora publica una nueva versión.');
+}
+
+// Garantiza que la pestaña tiene al menos n columnas (una pestaña importada puede traer solo las justas)
+function asegurarColumnas_(hoja, n) {
+  const hay = hoja.getMaxColumns();
+  if (hay < n) hoja.insertColumnsAfter(hay, n - hay);
+}
+
 function crearHoja_(ss, nombre, cabeceras) {
   const hoja = ss.getSheetByName(nombre) || ss.insertSheet(nombre);
   if (hoja.getLastRow() === 0) {
@@ -213,7 +255,7 @@ function historialDe_(codigo) {
 /* ============================================================
  * 3) WEB APP — lo que llama el móvil
  * ============================================================ */
-const VERSION_SERVIDOR = 2.6;
+const VERSION_SERVIDOR = 2.7;
 
 // Lecturas por la dirección (GET): solo para apps antiguas y solo con la clave antigua.
 // Desaparece al ejecutar cerrarAccesoAntiguo().
@@ -233,7 +275,14 @@ function doPost(e) {
   } catch (err) { return json_({ ok: false, error: 'json no valido' }); }
   const quien = quienEs_(body.token);
   if (!quien) return json_({ ok: false, error: 'token' });
-  return json_(responder_(body.accion, body, quien));
+  // Un fallo inesperado (p. ej. la hoja ocupada más de 30 s) se devuelve como mensaje legible;
+  // el móvil conserva lo pendiente y lo reintenta
+  try {
+    return json_(responder_(body.accion, body, quien));
+  } catch (err) {
+    const ocupado = /lock|bloqueo/i.test(String(err && err.message));
+    return json_({ ok: false, error: ocupado ? 'el servidor está ocupado; se reintentará' : 'error del servidor: ' + String(err && err.message).slice(0, 150) });
+  }
 }
 
 function responder_(accion, d, quien) {
@@ -404,6 +453,11 @@ function sanearProducto_(p) {
   if (p.linea_objetivo) o.linea_objetivo = texto_(p.linea_objetivo, 20);
   if (p.foto_url && /^https:\/\//.test(String(p.foto_url))) o.foto_url = String(p.foto_url).slice(0, 500);
   if (p.notas) o.notas = texto_(p.notas, 300);
+  // Energía por 100 g o 100 ml (el máximo real es ~900, el del aceite)
+  const kcal = Number(p.kcal_100g);
+  if (p.kcal_100g !== '' && p.kcal_100g != null && isFinite(kcal) && kcal > 0 && kcal <= 900) o.kcal_100g = Math.round(kcal);
+  // La app indica cuándo los datos vienen de Open Food Facts (para la etiqueta «alta»)
+  if (p.alta === 'openfoodfacts') o.alta = 'openfoodfacts';
   return o;
 }
 
@@ -514,6 +568,12 @@ function miniatura_(codigo) {
   if (!m || /openfoodfacts/.test(pr.foto_url)) return { ok: false, error: 'no es de Drive' };
   try {
     const f = DriveApp.getFileById(m[0]);
+    // Solo fotos guardadas por la app (carpeta Fotos): nunca otro archivo de la cuenta
+    const idFotos = carpetaFotos_().getId();
+    let esFoto = false;
+    const padres = f.getParents();
+    while (padres.hasNext()) { if (padres.next().getId() === idFotos) esFoto = true; }
+    if (!esFoto) return { ok: false, error: 'no es una foto de la app' };
     const blob = f.getThumbnail() || f.getBlob();
     return { ok: true, datos: Utilities.base64Encode(blob.getBytes()), tipo: blob.getContentType() || 'image/jpeg' };
   } catch (e) {
@@ -610,6 +670,7 @@ function guardarMovimientos_(movs, prods, quien) {
 function guardarProductos_(prods, movs) {
   const hoja = SpreadsheetApp.getActive().getSheetByName(NOMBRES.productos);
   const cab = HOJAS.productos;
+  asegurarColumnas_(hoja, cab.length);
   const n = hoja.getLastRow();
   const datos = n > 1 ? hoja.getRange(2, 1, n - 1, cab.length).getValues() : [];
   const indice = {};
@@ -637,13 +698,15 @@ function guardarProductos_(prods, movs) {
         }
       });
       if (cambiado) {
-        if (datos[i][cab.indexOf('alta')] === 'pendiente' && datos[i][1]) datos[i][cab.indexOf('alta')] = 'manual';
+        // Etiqueta «alta»: con nombre deja de estar pendiente o no encontrado
+        const iAlta = cab.indexOf('alta'), alta = String(datos[i][iAlta]);
+        if ((alta === 'pendiente' || alta === 'no_encontrado' || alta === '') && datos[i][1]) datos[i][iAlta] = p.alta === 'openfoodfacts' ? 'openfoodfacts' : 'manual';
         hoja.getRange(i + 2, 1, 1, cab.length).setValues([datos[i]]);
       }
     } else {
       const fila = cab.map(function (campo) {
         if (campo === 'codigo') return c;
-        if (campo === 'alta') return p.nombre ? 'manual' : 'pendiente';
+        if (campo === 'alta') return p.nombre ? (p.alta === 'openfoodfacts' ? 'openfoodfacts' : 'manual') : 'pendiente';
         if (campo === 'fecha_alta') return ahora;
         const v = p[campo];
         return v === undefined || v === null ? '' : v;
@@ -670,6 +733,8 @@ function cambiarConfig_(c) {
   if (TIPOS_CONFIG.indexOf(tipo) < 0 || !valor) return { ok: false, error: 'datos no validos' };
   if (tipo === 'UBICACION' && !padre) return { ok: false, error: 'falta la estancia' };
   if (tipo === 'CATEGORIA' && padre && ['DESPENSA', 'MATERIAL'].indexOf(padre) < 0) return { ok: false, error: 'modo no valido' };
+  // REVISION: valor = estancia o línea revisada; padre = fecha de la revisión (AAAA-MM-DD). Una fila por valor.
+  if (tipo === 'REVISION' && !/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(padre)) return { ok: false, error: 'fecha de revision no valida' };
   const activo = c.op !== 'desactivar';
 
   const lock = LockService.getScriptLock();
@@ -686,6 +751,7 @@ function cambiarConfig_(c) {
       if (mismoTipo && mismoPadre) {
         hoja.getRange(i + 2, 4).setValue(activo);
         if (tipo === 'CATEGORIA' && padre) hoja.getRange(i + 2, 3).setValue(padre);
+        if (tipo === 'REVISION') hoja.getRange(i + 2, 3).setValue(padre);
         return { ok: true, config: leerConfig_() };
       }
     }
@@ -704,21 +770,30 @@ function leerConfig_() {
     .filter(function (r) { return r[0] && r[1]; })
     .map(function (r) {
       const a = String(r[3]).toUpperCase();
-      return { tipo: String(r[0]).toUpperCase(), valor: String(r[1]).trim(), estancia: String(r[2]).trim(), padre: String(r[2]).trim(),
+      // La hoja convierte «2026-11-16» en fecha: se devuelve siempre como texto AAAA-MM-DD
+      const padre = r[2] instanceof Date ? Utilities.formatDate(r[2], 'Europe/Madrid', 'yyyy-MM-dd') : String(r[2]).trim();
+      return { tipo: String(r[0]).toUpperCase(), valor: String(r[1]).trim(), estancia: padre, padre: padre,
                activo: !(r[3] === false || a === 'FALSE' || a === 'FALSO' || a === 'NO' || a === '0') };
     });
 }
 
+// Objetivos se lee por cabecera: cualquier columna con nombre en la fila 1 llega a la app
+// (así una columna nueva no exige cambiar este código). La primera debe ser «id».
 function leerObjetivos_() {
   const hoja = SpreadsheetApp.getActive().getSheetByName(NOMBRES.objetivos);
-  if (!hoja || hoja.getLastRow() < 2 || String(hoja.getRange(1, 1).getValue()) !== 'id') return [];
-  const cab = HOJAS.objetivos;
-  return hoja.getRange(2, 1, hoja.getLastRow() - 1, cab.length).getValues()
-    .filter(function (r) { return r[0]; })
+  if (!hoja || hoja.getLastRow() < 2 || String(hoja.getRange(1, 1).getValue()).trim() !== 'id') return [];
+  const ancho = Math.min(Math.max(hoja.getLastColumn(), 1), 30);
+  const cab = hoja.getRange(1, 1, 1, ancho).getValues()[0].map(function (c) { return String(c).trim().toLowerCase().replace(/\s+/g, '_'); });
+  return hoja.getRange(2, 1, hoja.getLastRow() - 1, ancho).getValues()
+    .filter(function (r) { return r[0] !== '' && r[0] != null; })
     .map(function (r) {
       const o = {};
-      cab.forEach(function (k, i) { o[k] = r[i]; });
-      o.id = String(o.id);
+      cab.forEach(function (k, i) {
+        if (!k || k in o) return; // sin cabecera o repetida: se ignora
+        o[k] = r[i] instanceof Date ? Utilities.formatDate(r[i], 'Europe/Madrid', 'yyyy-MM-dd') : r[i];
+      });
+      HOJAS.objetivos.forEach(function (k) { if (!(k in o)) o[k] = ''; });
+      o.id = String(o.id).trim();
       return o;
     });
 }
@@ -728,6 +803,7 @@ function leerProductos_() {
   const n = hoja.getLastRow();
   if (n < 2) return [];
   const cab = HOJAS.productos;
+  asegurarColumnas_(hoja, cab.length);
   return hoja.getRange(2, 1, n - 1, cab.length).getValues().map(function (r) {
     const o = {};
     cab.forEach(function (k, i) { o[k] = r[i] instanceof Date ? r[i].toISOString() : r[i]; });
@@ -736,24 +812,23 @@ function leerProductos_() {
   });
 }
 
-// Stock por lote (codigo + caducidad + almacen + estante), solo lo que no es cero
+// Stock por lote (codigo + caducidad + almacen + estante), solo lo que no es cero.
+// Los lotes se agrupan con la misma clave que usa la validación (claveLote_: sin distinguir mayúsculas,
+// tildes ni espacios de más en estancia y estante) y se devuelven con el nombre tal como se escribió primero.
 function calcularStock_() {
   const hoja = SpreadsheetApp.getActive().getSheetByName(NOMBRES.movimientos);
   const n = hoja.getLastRow();
   if (n < 2) return [];
   const filas = hoja.getRange(2, 1, n - 1, HOJAS.movimientos.length).getValues();
-  const mapa = {};
+  const mapa = {}, orden = [];
   filas.forEach(function (r) {
     const codigo = String(r[5]);
     if (!codigo) return;
-    const cad = r[8] instanceof Date ? Utilities.formatDate(r[8], 'Europe/Madrid', 'yyyy-MM') : String(r[8]);
-    const k = [codigo, cad, String(r[9]), String(r[10])].join('|');
-    mapa[k] = (mapa[k] || 0) + Number(r[7] || 0);
+    const k = claveLote_(codigo, r[8], r[9], r[10]);
+    if (!mapa[k]) { mapa[k] = { codigo: codigo, caducidad: cadTexto_(r[8]), almacen: String(r[9]).trim(), estante: String(r[10]).trim(), stock: 0 }; orden.push(k); }
+    mapa[k].stock += Number(r[7] || 0);
   });
-  return Object.keys(mapa).filter(function (k) { return mapa[k] !== 0; }).map(function (k) {
-    const p = k.split('|');
-    return { codigo: p[0], caducidad: p[1], almacen: p[2], estante: p[3], stock: mapa[k] };
-  });
+  return orden.map(function (k) { return mapa[k]; }).filter(function (x) { return x.stock !== 0; });
 }
 
 function tokenValido_(t) { return !!quienEs_(t); }

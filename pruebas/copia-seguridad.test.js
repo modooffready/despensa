@@ -3,8 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { crearEntorno } = require('./simulador-gas');
 
-test('versión del servidor 2.6', function () {
-  assert.strictEqual(crearEntorno().ctx.__const.VERSION_SERVIDOR, 2.6);
+test('versión del servidor 2.7', function () {
+  assert.strictEqual(crearEntorno().ctx.__const.VERSION_SERVIDOR, 2.7);
 });
 
 test('activarCopiaSemanal programa un único activador los lunes a las 4 y hace la primera copia', function () {
@@ -64,7 +64,7 @@ test('ping y datos devuelven la fecha de la última copia', function () {
   assert.strictEqual(llamar('ping').ultimaCopia, '');
   g.ctx.copiaSeguridad();
   const p = llamar('ping');
-  assert.strictEqual(p.version, 2.6);
+  assert.strictEqual(p.version, 2.7);
   assert.strictEqual(p.ultimaCopia, g.propiedades.ULTIMA_COPIA);
   assert.strictEqual(llamar('datos').ultimaCopia, g.propiedades.ULTIMA_COPIA);
 });
