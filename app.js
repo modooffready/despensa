@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.10.2';
+const VERSION = '2.10.3';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -1358,22 +1358,40 @@ async function guardarTraspaso() {
   const estante = $('m-estante-caja').classList.contains('oculto') ? '' : $('m-estante').value;
   if (normalizar(destino) === normalizar(l.almacen) && normalizar(estante) === normalizar(l.estante)) { toast('El destino es el mismo sitio donde ya está. Elige otro lugar o estante.', 4000); return; }
 
-  const t = Date.now(), idSalida = nuevoId(), idEntrada = nuevoId();
-  const comun = { usuario: ajustes.usuario || '', codigo: mover.codigo, cantidad: cantidad, caducidad: l.caducidad || '' };
-  const salida = Object.assign({ id: idSalida, fecha: new Date(t).toISOString(), tipo: 'SALIDA', almacen: l.almacen, estante: l.estante || '',
-    nota: 'Traspaso a ' + destino + (estante ? ' · ' + estante : ''), traspaso: idEntrada }, comun);
-  const entrada = Object.assign({ id: idEntrada, fecha: new Date(t + 1).toISOString(), tipo: 'ENTRADA', almacen: destino, estante: estante,
-    nota: 'Traspaso desde ' + l.almacen + (l.estante ? ' · ' + l.estante : ''), traspaso: idSalida }, comun);
-  for (const m of [salida, entrada]) {
-    await idb.poner('pendientes', m);
-    await idb.poner('historial', Object.assign({}, m, { nombre: nombreDe(m.codigo), estado: 'pendiente' }));
-  }
+  await crearTraspaso(mover.codigo, l, cantidad, destino, estante);
   ajustes.ultimoDestino = destino;
   await guardarAjustesLocales();
   toast('Movido: ' + cantidad + ' × ' + nombreDe(mover.codigo) + ' → ' + destino);
   volverA(mover.origen);
   await refrescarEstado();
   await pintarHistorial();
+  sincronizar(false);
+}
+
+// Guarda un traspaso como dos movimientos enlazados (salida del lote de origen y entrada en el destino)
+async function crearTraspaso(codigo, l, cantidad, destino, estante) {
+  const t = Date.now(), idSalida = nuevoId(), idEntrada = nuevoId();
+  const comun = { usuario: ajustes.usuario || '', codigo: codigo, cantidad: cantidad, caducidad: l.caducidad || '' };
+  const salida = Object.assign({ id: idSalida, fecha: new Date(t).toISOString(), tipo: 'SALIDA', almacen: l.almacen, estante: l.estante || '',
+    nota: 'Traspaso a ' + destino + (estante ? ' · ' + estante : ''), traspaso: idEntrada }, comun);
+  const entrada = Object.assign({ id: idEntrada, fecha: new Date(t + 1).toISOString(), tipo: 'ENTRADA', almacen: destino, estante: estante || '',
+    nota: 'Traspaso desde ' + l.almacen + (l.estante ? ' · ' + l.estante : ''), traspaso: idSalida }, comun);
+  for (const m of [salida, entrada]) {
+    await idb.poner('pendientes', m);
+    await idb.poner('historial', Object.assign({}, m, { nombre: nombreDe(m.codigo), estado: 'pendiente' }));
+  }
+}
+
+// «Hecho» en una sugerencia de reparto: registra el traspaso tal como se propuso y repinta la sección Compra
+async function hacerReparto(i) {
+  const x = (objVista.reparto || [])[i];
+  if (!x) return;
+  const destino = objVista.almacen;
+  await crearTraspaso(x.codigo, x.lote, x.cantidad, destino, ubicacionesDe(destino)[0] || '');
+  toast('Movido: ' + x.cantidad + ' × ' + nombreDe(x.codigo) + ' → ' + destino);
+  pendientesCache = await idb.todos('pendientes');
+  await refrescarEstado();
+  pintarObjetivos();
   sincronizar(false);
 }
 
@@ -1783,6 +1801,81 @@ function aportePorEnvase(p, unidadObjetivo) {
   return 1;
 }
 
+// A qué subcategoría de un lugar va un producto. porId y porCat son las subcategorías de ese lugar.
+function lineaDeProducto(p, porId, porCat) {
+  let linea = porId[p.linea_objetivo], automatica = false, equivalente = '';
+  // La subcategoría del producto es de otro lugar (atún → TA-08 guardado en la Caja 72 h): se busca su equivalente aquí
+  if (!linea && p.linea_objetivo && p.linea_objetivo !== SIN_LINEA) {
+    const orig = objetivos.find(function (o) { return o.id === p.linea_objetivo; });
+    if (orig) {
+      const mias = raices(orig.descripcion);
+      let mejor = null, max = 0;
+      (porCat[orig.categoria] || []).forEach(function (l) {
+        const n = coincidencias(mias, raices(l.o.descripcion));
+        if (n > max) { max = n; mejor = l; }
+      });
+      if (mejor) { linea = mejor; equivalente = orig.id; }
+      // «Varios» es el cajón de lo que no encaja: fuera de su lugar ni cuenta para otra subcategoría ni avisa
+      else if (/^varios\b/.test(normalizar(orig.descripcion))) return { ignorar: true };
+    }
+  }
+  if (!linea) {
+    const cand = porCat[p.categoria] || [];
+    if (cand.length === 1) { linea = cand[0]; automatica = true; }
+  }
+  return { linea: linea, automatica: automatica, equivalente: equivalente };
+}
+
+// El lugar donde entra la compra y desde el que se reparte al resto: el primero de la lista de lugares (el trastero)
+function lugarPrincipal() { return estancias()[0] || ''; }
+
+// Qué se puede pasar del lugar principal a «destino» para completar sus objetivos, sin comprar nada.
+// Se eligen primero los lotes que caducan más tarde; a la Caja 72 h no se propone nada que caduque en menos de 6 meses.
+// Devuelve las sugerencias y lo que seguiría faltando después de hacerlas (eso es lo que hay que comprar).
+function sugerirReparto(porCodigo, destino) {
+  const origen = lugarPrincipal();
+  const r = calcularObjetivos(porCodigo, destino);
+  const res = { r: r, origen: origen, sugerencias: [], faltaTras: {}, traido: {} };
+  r.lineas.forEach(function (l) { res.faltaTras[l.o.id] = l.falta; res.traido[l.o.id] = 0; });
+  if (!origen || mismoSitio(origen, destino)) return res;
+  const porId = {}, porCat = {};
+  r.lineas.forEach(function (l) { porId[l.o.id] = l; (porCat[l.o.categoria] = porCat[l.o.categoria] || []).push(l); });
+  const esCaja = /^caja\b/.test(normalizar(destino));
+  // Lotes disponibles en el origen, agrupados por la subcategoría del destino a la que servirían
+  const disponibles = {};
+  Object.keys(porCodigo).forEach(function (c) {
+    const p = catalogo[c] || { codigo: c };
+    const d = lineaDeProducto(p, porId, porCat);
+    if (d.ignorar || !d.linea || !(d.linea.falta > 0)) return;
+    const aporte = aportePorEnvase(p, d.linea.o.unidad);
+    if (aporte === null) return;
+    const equipo = p.tipo === 'EQUIPO';
+    porCodigo[c].forEach(function (l) {
+      if (!mismoSitio(l.almacen, origen) || !(l.stock > 0)) return;
+      if (!equipo && estadoCaducidad(l.caducidad) === 'caducado') return;
+      if (esCaja && !equipo && mesesHasta(l.caducidad) < 6) return;
+      (disponibles[d.linea.o.id] = disponibles[d.linea.o.id] || []).push({ codigo: c, lote: l, aporte: aporte });
+    });
+  });
+  r.categorias.forEach(function (cat) {
+    cat.lineas.forEach(function (l) {
+      let resto = l.falta;
+      (disponibles[l.o.id] || []).sort(function (a, b) {
+        return (b.lote.caducidad || '9999').localeCompare(a.lote.caducidad || '9999') || nombreDe(a.codigo).localeCompare(nombreDe(b.codigo), 'es');
+      }).forEach(function (x) {
+        if (resto <= 1e-9) return;
+        const n = Math.min(x.lote.stock, Math.ceil(resto / x.aporte - 1e-9));
+        if (n < 1) return;
+        res.sugerencias.push({ codigo: x.codigo, lote: x.lote, cantidad: n, linea: l });
+        resto -= n * x.aporte;
+        res.traido[l.o.id] += n * x.aporte;
+      });
+      res.faltaTras[l.o.id] = Math.max(0, resto);
+    });
+  });
+  return res;
+}
+
 function calcularObjetivos(porCodigo, almacen) {
   const lineas = objetivos.filter(function (o) { return o.id && mismoSitio(o.almacen, almacen); }).map(function (o) {
     const obj = numero(o.cantidad_objetivo);
@@ -1796,26 +1889,9 @@ function calcularObjetivos(porCodigo, almacen) {
     const lotes = porCodigo[c].filter(function (l) { return mismoSitio(l.almacen, almacen); });
     if (!lotes.length) return;
     const p = catalogo[c] || { codigo: c };
-    let linea = porId[p.linea_objetivo], automatica = false, equivalente = '';
-    // La línea del producto es de otra estancia (atún → TA-08 guardado en la Caja 72 h): se busca su equivalente aquí
-    if (!linea && p.linea_objetivo && p.linea_objetivo !== SIN_LINEA) {
-      const orig = objetivos.find(function (o) { return o.id === p.linea_objetivo; });
-      if (orig) {
-        const mias = raices(orig.descripcion);
-        let mejor = null, max = 0;
-        (porCat[orig.categoria] || []).forEach(function (l) {
-          const n = coincidencias(mias, raices(l.o.descripcion));
-          if (n > max) { max = n; mejor = l; }
-        });
-        if (mejor) { linea = mejor; equivalente = orig.id; }
-        // «Varios» es el cajón de lo que no encaja: fuera de su lugar ni cuenta para otra subcategoría ni avisa
-        else if (/^varios\b/.test(normalizar(orig.descripcion))) return;
-      }
-    }
-    if (!linea) {
-      const cand = porCat[p.categoria] || [];
-      if (cand.length === 1) { linea = cand[0]; automatica = true; }
-    }
+    const d = lineaDeProducto(p, porId, porCat);
+    if (d.ignorar) return;
+    const linea = d.linea, automatica = d.automatica, equivalente = d.equivalente;
     const envases = lotes.reduce(function (s, l) { return s + l.stock; }, 0);
     if (!linea) {
       // Solo avisa si su categoría tiene líneas (varias) en esta estancia; si no tiene objetivos, se ignora
@@ -1861,15 +1937,18 @@ function calcularObjetivos(porCodigo, almacen) {
   return { lineas: lineas, categorias: cats, sinLinea: sinLinea };
 }
 
-function textoListaCompra(r, almacen) {
+// «rep» (opcional) es el resultado de sugerirReparto: la lista descuenta lo que se puede traer de otro lugar
+function textoListaCompra(r, almacen, rep) {
   const partes = [];
+  const falta = function (l) { return rep ? rep.faltaTras[l.o.id] : l.falta; };
   r.categorias.forEach(function (c) {
-    const faltan = c.lineas.filter(function (l) { return l.objetivo > 0 && !l.completa; });
+    const faltan = c.lineas.filter(function (l) { return l.objetivo > 0 && falta(l) > 1e-9; });
     if (!faltan.length) return;
     partes.push((partes.length ? '\n' : '') + '*' + bonito(c.categoria) + '*');
     faltan.forEach(function (l) {
-      partes.push('- ' + l.o.descripcion + ': faltan ' + formatoCant(l.falta) + ' ' + l.o.unidad +
-        ' (hay ' + formatoCant(l.tiene) + ' de ' + formatoCant(l.objetivo) + ')');
+      const traido = rep ? rep.traido[l.o.id] : 0;
+      partes.push('- ' + l.o.descripcion + ': faltan ' + formatoCant(falta(l)) + ' ' + l.o.unidad +
+        ' (hay ' + formatoCant(l.tiene) + ' de ' + formatoCant(l.objetivo) + (traido > 0 ? ' y puedes traer ' + formatoCant(traido) : '') + ')');
     });
   });
   if (!partes.length) return '';
@@ -1877,11 +1956,12 @@ function textoListaCompra(r, almacen) {
 }
 
 // Una línea por artículo, sin cabeceras: en Keep cada línea pasa a ser una casilla para marcar
-function textoListaMarcar(r) {
+function textoListaMarcar(r, rep) {
   const filas = [];
   r.categorias.forEach(function (c) {
     c.lineas.forEach(function (l) {
-      if (l.objetivo > 0 && !l.completa) filas.push(l.o.descripcion + ' — ' + formatoCant(l.falta) + ' ' + l.o.unidad);
+      const f = rep ? rep.faltaTras[l.o.id] : l.falta;
+      if (l.objetivo > 0 && f > 1e-9) filas.push(l.o.descripcion + ' — ' + formatoCant(f) + ' ' + l.o.unidad);
     });
   });
   return filas.join('\n');
@@ -1969,11 +2049,28 @@ function pintarObjetivos() {
   if ($('o-ver-sin')) $('o-ver-sin').onclick = function () { objVista.verSinLinea = !objVista.verSinLinea; pintarObjetivos(); };
 
   if (objVista.modo === 'compra') {
-    const t = textoListaCompra(r, objVista.almacen);
+    // Primero lo que ya se tiene en el lugar principal y solo hay que mover; después, lo que hay que comprar
+    const rep = sugerirReparto(lotesTodos(pendientesCache), objVista.almacen);
+    objVista.reparto = rep.sugerencias;
+    const hayReparto = rep.sugerencias.length > 0;
+    $('o-reparto').innerHTML = !hayReparto ? '' :
+      '<div class="tarjeta" id="o-reparto-caja"><h2 style="font-size:18px;margin:0 0 4px">1 · Pasa de ' + esc(rep.origen) + ' a ' + esc(objVista.almacen) + '</h2>' +
+      '<p class="muted" style="margin:0 0 6px">Ya lo tienes: solo hay que moverlo. Pulsa «Hecho» cuando lo hayas pasado.</p>' +
+      rep.sugerencias.map(function (x, i) {
+        return '<div class="lista-item"><span><b>' + x.cantidad + ' ×</b> ' + esc(nombreDe(x.codigo)) +
+          '<br><span class="muted" style="font-size:13px">' + esc((x.lote.estante ? x.lote.estante + ' · ' : '') + textoCaducidad(x.lote.caducidad)) +
+          ' · para ' + esc(x.linea.o.descripcion) + '</span></span><button class="o-hecho" data-i="' + i + '">Hecho</button></div>';
+      }).join('') + '</div>';
+    cada($('o-reparto').querySelectorAll('.o-hecho'), function (b) {
+      b.onclick = function () { b.disabled = true; hacerReparto(Number(b.dataset.i)); };
+    });
+    $('o-compra-titulo').textContent = hayReparto ? '2 · Compra para ' + objVista.almacen : '';
+    $('o-compra-titulo').classList.toggle('oculto', !hayReparto);
+    const t = textoListaCompra(r, objVista.almacen, rep);
     $('o-lista').innerHTML = '';
     $('o-compra').classList.remove('oculto');
-    $('o-texto').textContent = t || '✅ No falta nada: todos los objetivos están completos.';
-    objVista.textoMarcar = textoListaMarcar(r);
+    $('o-texto').textContent = t || (hayReparto ? '✅ Con lo que puedes traer no hace falta comprar nada.' : '✅ No falta nada: todos los objetivos están completos.');
+    objVista.textoMarcar = textoListaMarcar(r, rep);
     $('o-compartir').disabled = !t; $('o-copiar').disabled = !t; $('o-keep').disabled = !t;
   } else {
     $('o-compra').classList.add('oculto');

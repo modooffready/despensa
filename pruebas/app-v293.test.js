@@ -24,7 +24,15 @@ async function montar(opciones) {
   const p = await navegador.newPage({ viewport: { width: 390, height: 800 } });
   // Sondeo por tiempo y no por fotogramas: en un navegador sin pantalla los fotogramas pueden pararse y la espera no terminaría nunca
   const esperar = p.waitForFunction.bind(p);
-  p.waitForFunction = function (fn, arg, op) { return esperar(fn, arg, Object.assign({ polling: 100 }, op || {})); };
+  p.waitForFunction = function (fn, arg, op) {
+    return esperar(fn, arg, Object.assign({ polling: 100 }, op || {})).catch(async function (e) {
+      // Al agotar una espera, se añade el estado de la app al error para saber por qué no llegó
+      let estado = '';
+      try { estado = await p.evaluate(function () { return JSON.stringify({ pantalla: pantallaActual, sincronizando: sincronizando, error: ultimoError, objetivos: objetivos.length, stock: stockServidor.length, url: !!ajustes.url }); }); } catch (x) { estado = 'sin estado: ' + x.message; }
+      e.message += ' · estado de la app: ' + estado + ' · errores: ' + JSON.stringify(errores);
+      throw e;
+    });
+  };
   const errores = [];
   p.on('pageerror', function (e) { errores.push(e.message); });
   await p.route(/openfoodfacts\.org\/api/, function (rt) {
@@ -429,6 +437,61 @@ test('v2.10.2: si el servidor rechaza la salida de un traspaso, la entrada se an
     const bandeja = await p.textContent('#r-lista');
     assert.match(bandeja, /Era un traspaso y se ha anulado entero/);
     assert.strictEqual(await p.locator('#r-lista button[data-a="reintentar"], #r-lista button[data-a="corregir"]').count(), 0, 'un traspaso anulado no se puede reintentar a medias');
+    assert.deepStrictEqual(a.errores, []);
+  } finally { await a.cerrar(); }
+});
+
+test('v2.10.3: Compra propone primero qué pasar del trastero a la Caja 72 h y después qué comprar', async function () {
+  const fila = function (id, cat, desc, cant, uni, alm) { return { id: id, categoria: cat, descripcion: desc, cantidad_objetivo: cant, unidad: uni, almacen: alm, notas: '' }; };
+  const inicial = {};
+  inicial['B|' + cerca + '|' + T + '|Estante 5'] = 3;   // caduca pronto: no debe ir a la Caja
+  inicial['B|' + lejos + '|' + T + '|Estante 5'] = 4;
+  inicial['S|' + lejos + '|' + T + '|Estante 5'] = 6;
+  inicial['L|' + lejos + '|' + T + '|Estante 6'] = 3;
+  inicial['V|' + lejos + '|' + T + '|Estante 6'] = 2;   // Varios: no se propone
+  inicial['X|' + lejos + '|' + T + '|Estante 6'] = 5;   // sin subcategoría: no se propone
+  const srv = servidorConStock(inicial, {
+    config: CONFIG_MOVER.concat([{ tipo: 'CATEGORIA', valor: 'CONSERVAS', padre: 'DESPENSA', activo: true }]),
+    objetivos: [fila('TA-08', 'CONSERVAS', 'Atún / sardinas / caballa en lata', 30, 'uds', T), fila('TA-07', 'CONSERVAS', 'Legumbre cocida en bote', 20, 'uds', T),
+      fila('TA-02', 'BEBIDA', 'Leche UHT entera', 6, 'litros', T), fila('TA-51', 'BEBIDA', 'Varios', '', 'uds', T),
+      fila('CJ-03', 'CONSERVAS', 'Atún / sardinas en lata', 9, 'uds', CAJA), fila('CJ-02', 'CONSERVAS', 'Legumbre cocida', 6, 'uds', CAJA),
+      fila('CJ-05', 'BEBIDA', 'Leche UHT entera', 4, 'litros', CAJA), fila('CJ-06', 'BEBIDA', 'Bifrutas (brik 200 ml)', 6, 'uds', CAJA)],
+    productos: [{ codigo: 'B', nombre: 'Bonito del norte', categoria: 'CONSERVAS', linea_objetivo: 'TA-08' },
+      { codigo: 'S', nombre: 'Sardinas en aceite', categoria: 'CONSERVAS', linea_objetivo: 'TA-08' },
+      { codigo: 'L', nombre: 'Leche entera', categoria: 'BEBIDA', linea_objetivo: 'TA-02', unidad: 'litros', contenido: 1 },
+      { codigo: 'V', nombre: 'Vino tinto', categoria: 'BEBIDA', linea_objetivo: 'TA-51' },
+      { codigo: 'X', nombre: 'Mejillones', categoria: 'CONSERVAS' }] });
+  const a = await montar({ off: function (c, rt) { return json(rt, { status: 0 }, 404); }, servidor: srv.responder });
+  try {
+    const p = a.p;
+    await p.evaluate(function () { return guardarAjustes(); });
+    await p.waitForFunction(function () { return !sincronizando && stockServidor.length === 6 && objetivos.length === 8; });
+    // En el trastero (el lugar principal) no hay nada que repartir: solo la lista de la compra de siempre
+    await p.click('#t-compra');
+    await p.waitForSelector('#o-compra:not(.oculto)');
+    assert.strictEqual(await p.locator('#o-reparto .o-hecho').count(), 0);
+    assert.match(await p.textContent('#o-texto'), /Atún \/ sardinas \/ caballa en lata: faltan 17 uds \(hay 13 de 30\)/);
+    // En la Caja 72 h: primero lo que se puede traer
+    await p.click('#o-almacenes .chip[data-a="Caja 72 h"]');
+    await p.waitForSelector('#o-reparto .o-hecho');
+    const sug = await p.evaluate(function () { return objVista.reparto.map(function (x) { return x.cantidad + ' ' + x.codigo + ' ' + x.lote.caducidad + ' ' + x.linea.o.id; }); });
+    assert.deepStrictEqual(sug, ['3 L ' + lejos + ' CJ-05', '4 B ' + lejos + ' CJ-03', '5 S ' + lejos + ' CJ-03'],
+      'lo que caduca más tarde primero; nada que caduque en menos de 6 meses; ni Varios ni productos sin subcategoría');
+    assert.match(await p.textContent('#o-reparto'), /1 · Pasa de Trastero Ávila a Caja 72 h/);
+    assert.strictEqual(await p.textContent('#o-compra-titulo'), '2 · Compra para Caja 72 h');
+    const lista = await p.textContent('#o-texto');
+    assert.doesNotMatch(lista, /Atún/, 'el atún se cubre entero con lo que hay en el trastero');
+    assert.match(lista, /Leche UHT entera: faltan 1 litros \(hay 0 de 4 y puedes traer 3\)/);
+    assert.match(lista, /Legumbre cocida: faltan 6 uds \(hay 0 de 6\)/);
+    assert.match(lista, /Bifrutas \(brik 200 ml\): faltan 6 uds/);
+    if (process.env.CAPTURAS) await p.screenshot({ path: '/tmp/reparto.png' });
+    // «Hecho» en la primera sugerencia: se registra el traspaso y la lista se actualiza
+    await p.click('#o-reparto .o-hecho >> nth=0');
+    await p.waitForFunction(function () { return !sincronizando && objVista.reparto.length === 2 && stockServidor.some(function (l) { return l.almacen === 'Caja 72 h'; }); }, null, { timeout: 15000 });
+    assert.strictEqual(srv.stock['L|' + lejos + '|Caja 72 h|'], 3);
+    assert.strictEqual(srv.stock['L|' + lejos + '|' + T + '|Estante 6'], 0);
+    assert.deepStrictEqual(await p.evaluate(function () { return objVista.reparto.map(function (x) { return x.cantidad + ' ' + x.codigo; }); }), ['4 B', '5 S']);
+    assert.strictEqual(await p.evaluate(function () { return pantallaActual + ' ' + objVista.modo + ' ' + objVista.almacen; }), 'objetivos compra Caja 72 h', 'se queda en la misma pantalla');
     assert.deepStrictEqual(a.errores, []);
   } finally { await a.cerrar(); }
 });
