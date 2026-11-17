@@ -360,6 +360,32 @@
     </div>
   </section>
 
+  <!-- MOVER DE UN LUGAR A OTRO -->
+  <section id="pantalla-mover" class="oculto">
+    <div class="tarjeta">
+      <h2 id="m-titulo">Mover a otro lugar</h2>
+      <p class="muted" style="margin-top:0">Pasa unidades de un lugar a otro sin perder su fecha de caducidad.</p>
+      <label>¿De dónde lo sacas?</label>
+      <div class="chips" id="m-lotes" style="flex-direction:column;align-items:stretch"></div>
+      <label for="m-cantidad">¿Cuántas unidades?</label>
+      <div class="cantidad">
+        <button id="m-menos" aria-label="Una menos">−</button>
+        <input id="m-cantidad" type="number" inputmode="numeric" min="1" value="1">
+        <button id="m-mas" aria-label="Una más">+</button>
+      </div>
+      <div class="muted" id="m-max" style="margin-top:4px"></div>
+      <label for="m-destino">¿A dónde va?</label>
+      <select id="m-destino"></select>
+      <div id="m-estante-caja">
+        <label for="m-estante">Estante o sitio</label>
+        <select id="m-estante"></select>
+      </div>
+      <div class="lote pronto" id="m-aviso" style="margin-top:8px"></div>
+    </div>
+    <button class="btn btn-principal" id="m-guardar">Mover</button>
+    <button class="btn btn-sec" id="m-cancelar">Cancelar</button>
+  </section>
+
   <!-- REVISIÓN DE RECHAZADOS -->
   <section id="pantalla-revision" class="oculto">
     <div class="tarjeta"><h2>Movimientos que no se pudieron guardar</h2>
@@ -443,6 +469,7 @@
       <button class="btn btn-principal" id="fs-entrada" style="font-size:18px;padding:16px">＋ Entrada</button>
       <button class="btn btn-peligro" id="fs-salida" style="padding:16px">－ Salida</button>
     </div>
+    <button class="btn btn-sec" id="fs-mover">↔️ Mover a otro lugar</button>
     <button class="btn btn-sec" id="fs-editar">✏️ Editar ficha</button>
   </div>
 </div>
@@ -455,6 +482,6 @@
   <button id="t-objetivos"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="5"></circle><circle cx="12" cy="12" r="1"></circle></svg></span>Objetivos</button>
   <button id="t-compra"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h2l2.5 12h10L20 7H6.5"></path><circle cx="9" cy="20" r="1.5"></circle><circle cx="17" cy="20" r="1.5"></circle></svg></span>Compra</button>
 </nav>
-<script src="app.js?v=2.10.1"></script>
+<script src="app.js?v=2.10.2"></script>
 </body>
 </html>

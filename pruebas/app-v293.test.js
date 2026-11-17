@@ -22,6 +22,9 @@ async function montar(opciones) {
   await new Promise(function (ok) { srv.listen(0, ok); });
   const navegador = await chromium.launch();
   const p = await navegador.newPage({ viewport: { width: 390, height: 800 } });
+  // Sondeo por tiempo y no por fotogramas: en un navegador sin pantalla los fotogramas pueden pararse y la espera no terminaría nunca
+  const esperar = p.waitForFunction.bind(p);
+  p.waitForFunction = function (fn, arg, op) { return esperar(fn, arg, Object.assign({ polling: 100 }, op || {})); };
   const errores = [];
   p.on('pageerror', function (e) { errores.push(e.message); });
   await p.route(/openfoodfacts\.org\/api/, function (rt) {
@@ -321,6 +324,111 @@ test('v2.10.0: barra de abajo con la sección activa y botón flotante de Escane
       return document.getElementById('o-copiar').getBoundingClientRect().bottom <= document.getElementById('fab-escanear').getBoundingClientRect().top;
     });
     assert.ok(copiar, 'el botón Copiar no queda bajo el botón flotante');
+    assert.deepStrictEqual(a.errores, []);
+  } finally { await a.cerrar(); }
+});
+
+// Servidor simulado con stock por lote, como el de verdad: rechaza una salida sin stock suficiente
+function servidorConStock(inicial, opciones) {
+  const stock = Object.assign({}, inicial), recibidos = [];
+  const clave = function (m) { return [m.codigo, m.caducidad || '', m.almacen, m.estante || ''].join('|'); };
+  return {
+    recibidos: recibidos, stock: stock,
+    responder: function (b, rt) {
+      if (b.accion === 'movimientos') {
+        const aceptados = [], rechazados = [];
+        (b.movimientos || []).forEach(function (m) {
+          const k = clave(m), d = m.tipo === 'SALIDA' ? -m.cantidad : m.cantidad;
+          if ((opciones.rechazar && opciones.rechazar(m)) || (stock[k] || 0) + d < 0) { rechazados.push({ id: m.id, motivo: 'sin stock suficiente en ese lote (constan ' + (stock[k] || 0) + ')' }); return; }
+          stock[k] = (stock[k] || 0) + d; recibidos.push(m); aceptados.push(m.id);
+        });
+        return json(rt, { ok: true, aceptados: aceptados, rechazados: rechazados });
+      }
+      return json(rt, { ok: true, version: 2.7, aceptados: [], rechazados: [], objetivos: opciones.objetivos || [], config: opciones.config, productos: opciones.productos,
+        stock: Object.keys(stock).filter(function (k) { return stock[k]; }).map(function (k) { const p = k.split('|'); return { codigo: p[0], caducidad: p[1], almacen: p[2], estante: p[3], stock: stock[k] }; }) });
+    }
+  };
+}
+const CAJA = 'Caja 72 h';
+const CONFIG_MOVER = CONFIG.concat([{ tipo: 'ESTANCIA', valor: CAJA, padre: '', activo: true },
+  { tipo: 'UBICACION', valor: 'Estante 5', estancia: T, padre: T, activo: true }, { tipo: 'UBICACION', valor: 'Estante 6', estancia: T, padre: T, activo: true }]);
+const lejos = (new Date().getFullYear() + 3) + '-05', cerca = (function () { const f = new Date(new Date().getFullYear(), new Date().getMonth() + 2, 1); return f.getFullYear() + '-' + String(f.getMonth() + 1).padStart(2, '0'); })();
+
+test('v2.10.2: mover unidades del trastero a la Caja 72 h conserva la caducidad; deshacer devuelve las dos mitades', async function () {
+  const inicial = {}; inicial['A|' + cerca + '|' + T + '|Estante 5'] = 3; inicial['A|' + lejos + '|' + T + '|Estante 5'] = 4;
+  const srv = servidorConStock(inicial, { config: CONFIG_MOVER, productos: [{ codigo: 'A', nombre: 'Bonito del norte en migas', categoria: 'BEBIDA' }] });
+  const a = await montar({ off: function (c, rt) { return json(rt, { status: 0 }, 404); }, servidor: srv.responder });
+  try {
+    const p = a.p;
+    await p.evaluate(function () { return guardarAjustes(); });
+    await p.waitForFunction(function () { return !sincronizando && stockServidor.length === 2; });
+    await p.click('#t-stock');
+    await p.waitForSelector('#pantalla-stock:not(.oculto)');
+    await p.evaluate(function () { return abrirMover('A'); });
+    await p.waitForSelector('#pantalla-mover:not(.oculto)');
+    let e = await p.evaluate(function () {
+      return { titulo: document.getElementById('m-titulo').textContent, lote: document.querySelector('#m-lotes .activo').textContent,
+        destino: document.getElementById('m-destino').value, max: document.getElementById('m-max').textContent,
+        barra: !document.getElementById('pestanas').classList.contains('oculto'), boton: document.getElementById('m-guardar').textContent,
+        aviso: document.getElementById('m-aviso').classList.contains('oculto') };
+    });
+    assert.strictEqual(e.titulo, 'Mover: Bonito del norte en migas');
+    assert.match(e.lote, new RegExp('Estante 5 · caduca ' + lejos.split('-').reverse().join('/') + ' · 4 unidades'), 'propone el lote que caduca más tarde');
+    assert.strictEqual(e.destino, CAJA, 'propone la Caja 72 h como destino');
+    assert.strictEqual(e.boton, 'Mover a Caja 72 h');
+    assert.ok(e.aviso && !e.barra, 'sin aviso de caducidad y sin barra de secciones');
+    // El lote que caduca pronto avisa si va a la Caja
+    await p.click('#m-lotes .chip:first-child');
+    assert.match(await p.textContent('#m-aviso'), /Caduca en menos de 6 meses/);
+    await p.click('#m-lotes .chip:last-child');
+    // No deja mover más de lo que hay
+    await p.click('#m-mas'); await p.click('#m-mas'); await p.click('#m-mas'); await p.click('#m-mas'); await p.click('#m-mas');
+    assert.strictEqual(await p.inputValue('#m-cantidad'), '4');
+    await p.fill('#m-cantidad', '2');
+    if (process.env.CAPTURAS) await p.screenshot({ path: '/tmp/mover.png' });
+    await p.click('#m-guardar');
+    await p.waitForSelector('#pantalla-stock:not(.oculto)');
+    await p.waitForFunction(function () { return !sincronizando && stockServidor.length === 3; }, null, { timeout: 15000 });
+    assert.deepStrictEqual(srv.recibidos.map(function (m) { return [m.tipo, m.cantidad, m.caducidad, m.almacen, m.estante, m.nota, m.traspaso].join(' | '); }), [
+      'SALIDA | 2 | ' + lejos + ' | ' + T + ' | Estante 5 | Traspaso a Caja 72 h | ',
+      'ENTRADA | 2 | ' + lejos + ' | Caja 72 h |  | Traspaso desde ' + T + ' · Estante 5 | '], 'salida y entrada, en ese orden, con la misma caducidad; el enlace no viaja al servidor');
+    assert.strictEqual(srv.stock['A|' + lejos + '|Caja 72 h|'], 2);
+    assert.strictEqual(srv.stock['A|' + lejos + '|' + T + '|Estante 5'], 2);
+    // Deshacer desde cualquiera de las dos líneas devuelve las dos mitades
+    await p.click('#t-inicio');
+    await p.waitForSelector('#pantalla-inicio:not(.oculto)');
+    assert.match(await p.textContent('#lista-historial'), /Traspaso a Caja 72 h/);
+    await p.evaluate(async function () { const h = (await idb.todos('historial')).find(function (m) { return m.tipo === 'SALIDA'; }); await deshacer(h.id); });
+    await p.waitForFunction(function () { return !sincronizando && stockServidor.length === 2; }, null, { timeout: 15000 });
+    assert.strictEqual(srv.stock['A|' + lejos + '|Caja 72 h|'], 0);
+    assert.strictEqual(srv.stock['A|' + lejos + '|' + T + '|Estante 5'], 4);
+    assert.deepStrictEqual(srv.recibidos.slice(2).map(function (m) { return m.tipo + ' ' + m.almacen; }), ['SALIDA Caja 72 h', 'ENTRADA ' + T]);
+    assert.deepStrictEqual(a.errores, []);
+  } finally { await a.cerrar(); }
+});
+
+test('v2.10.2: si el servidor rechaza la salida de un traspaso, la entrada se anula sola y no se crea stock', async function () {
+  const inicial = {}; inicial['A|' + lejos + '|' + T + '|Estante 5'] = 4;
+  let rechazar = true;
+  const srv = servidorConStock(inicial, { config: CONFIG_MOVER, productos: [{ codigo: 'A', nombre: 'Bonito', categoria: 'BEBIDA' }],
+    rechazar: function (m) { return rechazar && m.tipo === 'SALIDA' && m.almacen === T; } });
+  const a = await montar({ off: function (c, rt) { return json(rt, { status: 0 }, 404); }, servidor: srv.responder });
+  try {
+    const p = a.p;
+    await p.evaluate(function () { return guardarAjustes(); });
+    await p.waitForFunction(function () { return !sincronizando && stockServidor.length === 1; });
+    await p.evaluate(function () { return abrirMover('A'); });
+    await p.waitForSelector('#pantalla-mover:not(.oculto)');
+    await p.click('#m-guardar');
+    await p.waitForFunction(function () { return revision.length === 1; }, null, { timeout: 15000 });
+    await p.waitForFunction(async function () { return !sincronizando && !(await idb.todos('pendientes')).length; }, null, { timeout: 15000 });
+    await p.waitForTimeout(800);
+    assert.strictEqual(srv.stock['A|' + lejos + '|Caja 72 h|'] || 0, 0, 'la entrada aceptada se compensa con una salida: no queda stock inventado en la Caja');
+    assert.strictEqual(srv.stock['A|' + lejos + '|' + T + '|Estante 5'], 4, 'el trastero sigue igual');
+    await p.evaluate(function () { abrirRevision(); });
+    const bandeja = await p.textContent('#r-lista');
+    assert.match(bandeja, /Era un traspaso y se ha anulado entero/);
+    assert.strictEqual(await p.locator('#r-lista button[data-a="reintentar"], #r-lista button[data-a="corregir"]').count(), 0, 'un traspaso anulado no se puede reintentar a medias');
     assert.deepStrictEqual(a.errores, []);
   } finally { await a.cerrar(); }
 });

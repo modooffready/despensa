@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.10.1';
+const VERSION = '2.10.2';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -115,6 +115,7 @@ function atras() {
     case 'formulario': volverA(origenFormulario); break;
     case 'informe': abrirStock(); break;
     case 'escaner': volverA(origenEscaner); break;
+    case 'mover': volverA(mover.origen); break;
     case 'ajustes':
       if (!ajustes.url || !ajustes.token || !ajustes.usuario) { toast('Rellena y guarda los ajustes primero'); ponerTrampa(); return; }
       mostrar('inicio'); break;
@@ -126,7 +127,7 @@ window.addEventListener('popstate', function () { trampa = false; atras(); });
 function mostrar(nombre) {
   pantallaActual = nombre;
   if (nombre !== 'inicio') ponerTrampa();
-  ['inicio', 'escaner', 'formulario', 'ajustes', 'stock', 'buscar', 'informe', 'revision', 'objetivos'].forEach(function (p) {
+  ['inicio', 'escaner', 'formulario', 'ajustes', 'stock', 'buscar', 'informe', 'revision', 'objetivos', 'mover'].forEach(function (p) {
     $('pantalla-' + p).classList.toggle('oculto', p !== nombre);
   });
   if (nombre !== 'escaner') pararEscaner();
@@ -255,6 +256,13 @@ function enlazarEventos() {
   $('fs-sig').onclick = function () { moverFicha(1); };
   $('fs-entrada').onclick = function () { const c = fichaActual.codigo; cerrarFicha(); abrirFormulario(c); };
   $('fs-salida').onclick = function () { const c = fichaActual.codigo; cerrarFicha(); abrirFormulario(c, { salida: true }); };
+  $('fs-mover').onclick = function () { const c = fichaActual.codigo; cerrarFicha(); abrirMover(c); };
+  $('m-menos').onclick = function () { cambiarCantidadMover(-1); };
+  $('m-mas').onclick = function () { cambiarCantidadMover(1); };
+  $('m-destino').onchange = function () { pintarDestinoMover(''); };
+  $('m-estante').onchange = pintarAvisoMover;
+  $('m-guardar').onclick = guardarTraspaso;
+  $('m-cancelar').onclick = function () { volverA(mover.origen); };
   $('fs-editar').onclick = function () { const c = fichaActual.codigo; cerrarFicha(); abrirFormulario(c, { editar: true }); };
   // Deslizar a izquierda/derecha para pasar de producto
   let x0 = null;
@@ -441,6 +449,7 @@ async function pintarHistorial() {
       '<div class="meta">' + esc(m.caducidad || 'sin cad.') + ' · ' + esc(m.almacen) + (m.estante ? ' · ' + esc(m.estante) : '') +
       ' · ' + new Date(m.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) +
       (m.estado !== 'ok' && m.estado !== 'pendiente' ? '<br><span class="error">' + esc(m.estado) + '</span>' : '') +
+      (m.traspaso ? '<br><span class="muted">' + esc(m.nota || 'traspaso') + '</span>' : '') +
       (m.deshecho ? '<br><span class="muted">deshecho</span>' : '') + (m.esDeshacer ? '<br><span class="muted">corrección</span>' : '') +
       (sePuedeDeshacer(m) ? '<br><button class="deshacer" data-id="' + esc(m.id) + '">↩️ Deshacer</button>' : '') +
       '</div></div><div>' + icono + '</div></li>';
@@ -457,40 +466,53 @@ async function pintarHistorial() {
   });
 }
 
-// Deshacer un movimiento: si no se ha enviado, se borra; si ya se envió, se registra el contrario
+// Deshacer un movimiento: si no se ha enviado, se borra; si ya se envió, se registra el contrario.
+// Un traspaso son dos movimientos (salida del origen y entrada en el destino): se deshacen los dos a la vez.
 async function deshacer(id) {
   const m = await idb.get('historial', id);
   if (!m) return;
+  const par = m.traspaso ? await idb.get('historial', m.traspaso) : null;
+  const grupo = [m].concat(par && !par.deshecho ? [par] : []);
   // Quitar una entrada no puede dejar el lote en negativo (p. ej. si después ya se sacó)
-  if (m.tipo === 'ENTRADA') {
-    pendientesCache = await idb.todos('pendientes');
-    const lote = lotesDe(m.codigo).find(function (l) { return (l.caducidad || '') === (m.caducidad || '') && l.almacen === m.almacen && (l.estante || '') === (m.estante || ''); });
-    if (!lote || lote.stock < m.cantidad) { toast('No se puede deshacer: ese lote ya no tiene esas unidades.', 4000); return; }
+  pendientesCache = await idb.todos('pendientes');
+  for (const x of grupo) {
+    if (x.tipo !== 'ENTRADA') continue;
+    const lote = lotesDe(x.codigo).find(function (l) { return (l.caducidad || '') === (x.caducidad || '') && l.almacen === x.almacen && (l.estante || '') === (x.estante || ''); });
+    if (!lote || lote.stock < x.cantidad) { toast('No se puede deshacer: ese lote ya no tiene esas unidades.', 4000); return; }
   }
-  const pend = await idb.get('pendientes', id);
   // Si se está enviando ahora mismo, el servidor puede estar guardándolo: borrarlo aquí lo dejaría
   // en la hoja sin poder deshacerlo. Se espera a que termine el envío.
-  if (pend && sincronizando) { toast('Se está enviando ahora mismo. Espera unos segundos y vuelve a pulsar Deshacer.', 4500); return; }
-  if (pend) {
-    await idb.borrar('pendientes', id);
-    await idb.borrar('historial', id);
-    toast('Movimiento anulado (no se había enviado)');
-  } else {
-    const contrario = m.tipo === 'ENTRADA' ? 'SALIDA' : 'ENTRADA';
-    const mov = { id: (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2)),
-      fecha: new Date().toISOString(), usuario: ajustes.usuario || '', tipo: contrario, codigo: m.codigo, cantidad: m.cantidad,
-      caducidad: m.caducidad || '', almacen: m.almacen, estante: m.estante || '', nota: 'Deshacer movimiento del ' + new Date(m.fecha).toLocaleString('es-ES') };
-    await idb.poner('pendientes', mov);
-    await idb.poner('historial', Object.assign({}, mov, { nombre: nombreDe(mov.codigo), estado: 'pendiente', esDeshacer: true }));
-    m.deshecho = true;
-    await idb.poner('historial', m);
-    toast('Deshecho: se ha registrado una ' + (contrario === 'SALIDA' ? 'salida' : 'entrada') + ' de ' + m.cantidad);
+  const pendientes = {};
+  for (const x of grupo) pendientes[x.id] = !!(await idb.get('pendientes', x.id));
+  if (sincronizando && grupo.some(function (x) { return pendientes[x.id]; })) { toast('Se está enviando ahora mismo. Espera unos segundos y vuelve a pulsar Deshacer.', 4500); return; }
+  // Primero la entrada (su contrario es una salida, que debe ir antes para que el servidor tenga de dónde sacar)
+  grupo.sort(function (a, b) { return (a.tipo === 'ENTRADA' ? 0 : 1) - (b.tipo === 'ENTRADA' ? 0 : 1); });
+  let base = Date.now(), contrarios = 0;
+  for (const x of grupo) {
+    if (pendientes[x.id]) {
+      await idb.borrar('pendientes', x.id);
+      await idb.borrar('historial', x.id);
+    } else {
+      const contrario = x.tipo === 'ENTRADA' ? 'SALIDA' : 'ENTRADA';
+      const mov = { id: nuevoId(), fecha: new Date(base++).toISOString(), usuario: ajustes.usuario || '', tipo: contrario, codigo: x.codigo, cantidad: x.cantidad,
+        caducidad: x.caducidad || '', almacen: x.almacen, estante: x.estante || '', nota: 'Deshacer movimiento del ' + new Date(x.fecha).toLocaleString('es-ES') };
+      await idb.poner('pendientes', mov);
+      await idb.poner('historial', Object.assign({}, mov, { nombre: nombreDe(mov.codigo), estado: 'pendiente', esDeshacer: true }));
+      x.deshecho = true;
+      await idb.poner('historial', x);
+      contrarios++;
+    }
   }
+  if (par) toast('Traspaso deshecho: las unidades vuelven a ' + (m.tipo === 'SALIDA' ? m.almacen : par.almacen));
+  else if (!contrarios) toast('Movimiento anulado (no se había enviado)');
+  else toast('Deshecho: se ha registrado una ' + (m.tipo === 'ENTRADA' ? 'salida' : 'entrada') + ' de ' + m.cantidad);
   delete historialCache[m.codigo];
   await refrescarEstado();
   await pintarHistorial();
   sincronizar(false);
 }
+
+function nuevoId() { return crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2); }
 
 async function marcarHistorial(id, estado) {
   const m = await idb.get('historial', id);
@@ -1250,6 +1272,134 @@ async function guardarMovimiento(seguir) {
   sincronizar(false);
 }
 
+/* ---------- Mover de un lugar a otro (traspaso) ----------
+ * Un traspaso se guarda como dos movimientos enlazados: una salida del lote de origen y una entrada
+ * en el destino con la misma caducidad. Así no hace falta cambiar el servidor y la fecha no se pierde. */
+let mover = { codigo: '', lotes: [], lote: null, origen: 'inicio' };
+
+function textoCaducidad(cad) { return cad ? 'caduca ' + String(cad).split('-').reverse().join('/') : 'sin caducidad'; }
+function mesesHasta(cad) {
+  if (!cad) return Infinity;
+  const p = String(cad).split('-'), hoy = new Date();
+  return (Number(p[0]) - hoy.getFullYear()) * 12 + (Number(p[1]) - (hoy.getMonth() + 1));
+}
+
+async function abrirMover(codigo) {
+  pendientesCache = await idb.todos('pendientes');
+  const lotes = lotesDe(codigo);
+  if (!lotes.length) { toast('No queda stock de este producto para mover.'); return; }
+  const origen = PANTALLAS_CON_BARRA.indexOf(pantallaActual) >= 0 ? pantallaActual : mover.origen;
+  // Por defecto, el lote que caduca más tarde: es el que conviene llevar a la Caja 72 h o a los coches
+  mover = { codigo: codigo, lotes: lotes, lote: lotes[lotes.length - 1], origen: origen };
+  $('m-titulo').textContent = 'Mover: ' + nombreDe(codigo);
+  $('m-cantidad').value = 1;
+  pintarLotesMover();
+  mostrar('mover');
+}
+
+function pintarLotesMover() {
+  $('m-lotes').innerHTML = mover.lotes.map(function (l, i) {
+    return '<button class="chip' + (l === mover.lote ? ' activo' : '') + '" data-i="' + i + '" style="text-align:left">' + esc(l.almacen) + (l.estante ? ' · ' + esc(l.estante) : '') +
+      ' · ' + esc(textoCaducidad(l.caducidad)) + ' · ' + l.stock + (l.stock === 1 ? ' unidad' : ' unidades') + '</button>';
+  }).join('');
+  cada($('m-lotes').children, function (b) {
+    b.onclick = function () { mover.lote = mover.lotes[Number(b.dataset.i)]; pintarLotesMover(); };
+  });
+  const l = mover.lote;
+  $('m-cantidad').max = l.stock;
+  if ((parseInt($('m-cantidad').value, 10) || 1) > l.stock) $('m-cantidad').value = l.stock;
+  $('m-max').textContent = 'Ahí hay ' + l.stock + (l.stock === 1 ? ' unidad.' : ' unidades.');
+  // Destinos: todos los lugares; por defecto el último usado, o la Caja 72 h, o el primero distinto del origen
+  const lugares = estancias();
+  const distinto = function (e) { return normalizar(e) !== normalizar(l.almacen); };
+  const previo = $('m-destino').value;
+  const preferido = [previo, ajustes.ultimoDestino, lugares.find(function (e) { return /^caja\b/.test(normalizar(e)); }), lugares.find(distinto)]
+    .find(function (e) { return e && lugares.indexOf(e) >= 0 && distinto(e); }) || lugares[0];
+  opciones($('m-destino'), lugares);
+  $('m-destino').value = preferido;
+  pintarDestinoMover('');
+}
+
+function pintarDestinoMover(estante) {
+  const ubis = ubicacionesDe($('m-destino').value);
+  $('m-estante-caja').classList.toggle('oculto', !ubis.length);
+  opciones($('m-estante'), ubis);
+  if (ubis.length) $('m-estante').value = ubis.indexOf(estante) >= 0 ? estante : ubis[0];
+  pintarAvisoMover();
+}
+
+function pintarAvisoMover() {
+  const l = mover.lote, dest = $('m-destino').value;
+  const avisos = [];
+  if (/^caja\b/.test(normalizar(dest)) && (catalogo[mover.codigo] || {}).tipo !== 'EQUIPO' && mesesHasta(l.caducidad) < 6) {
+    avisos.push('⚠️ Caduca en menos de 6 meses: en la ' + dest + ' conviene guardar lo que caduca más tarde.');
+  }
+  $('m-aviso').textContent = avisos.join(' ');
+  $('m-aviso').classList.toggle('oculto', !avisos.length);
+  $('m-guardar').textContent = 'Mover a ' + dest;
+}
+
+function cambiarCantidadMover(d) {
+  const max = mover.lote ? mover.lote.stock : 1;
+  $('m-cantidad').value = Math.min(max, Math.max(1, (parseInt($('m-cantidad').value, 10) || 1) + d));
+}
+
+async function guardarTraspaso() {
+  const l = mover.lote;
+  const txt = String($('m-cantidad').value).trim();
+  if (!/^\d+$/.test(txt) || parseInt(txt, 10) < 1) { toast('La cantidad debe ser un número entero de unidades'); return; }
+  const cantidad = parseInt(txt, 10);
+  // Se vuelve a mirar el stock por si ha cambiado mientras la pantalla estaba abierta
+  pendientesCache = await idb.todos('pendientes');
+  const ahora = lotesDe(mover.codigo).find(function (x) { return (x.caducidad || '') === (l.caducidad || '') && x.almacen === l.almacen && (x.estante || '') === (l.estante || ''); });
+  const hay = ahora ? ahora.stock : 0;
+  if (cantidad > hay) { toast('En ese sitio solo constan ' + hay + ' unidades.', 4000); return; }
+  const destino = $('m-destino').value;
+  const estante = $('m-estante-caja').classList.contains('oculto') ? '' : $('m-estante').value;
+  if (normalizar(destino) === normalizar(l.almacen) && normalizar(estante) === normalizar(l.estante)) { toast('El destino es el mismo sitio donde ya está. Elige otro lugar o estante.', 4000); return; }
+
+  const t = Date.now(), idSalida = nuevoId(), idEntrada = nuevoId();
+  const comun = { usuario: ajustes.usuario || '', codigo: mover.codigo, cantidad: cantidad, caducidad: l.caducidad || '' };
+  const salida = Object.assign({ id: idSalida, fecha: new Date(t).toISOString(), tipo: 'SALIDA', almacen: l.almacen, estante: l.estante || '',
+    nota: 'Traspaso a ' + destino + (estante ? ' · ' + estante : ''), traspaso: idEntrada }, comun);
+  const entrada = Object.assign({ id: idEntrada, fecha: new Date(t + 1).toISOString(), tipo: 'ENTRADA', almacen: destino, estante: estante,
+    nota: 'Traspaso desde ' + l.almacen + (l.estante ? ' · ' + l.estante : ''), traspaso: idSalida }, comun);
+  for (const m of [salida, entrada]) {
+    await idb.poner('pendientes', m);
+    await idb.poner('historial', Object.assign({}, m, { nombre: nombreDe(m.codigo), estado: 'pendiente' }));
+  }
+  ajustes.ultimoDestino = destino;
+  await guardarAjustesLocales();
+  toast('Movido: ' + cantidad + ' × ' + nombreDe(mover.codigo) + ' → ' + destino);
+  volverA(mover.origen);
+  await refrescarEstado();
+  await pintarHistorial();
+  sincronizar(false);
+}
+
+// Si el servidor rechaza una mitad de un traspaso, la otra mitad se anula: si aún no se ha enviado se borra,
+// y si ya se guardó se registra su contrario. Así nunca queda stock creado o perdido por un traspaso a medias.
+async function anularParDeTraspaso(original, anulados) {
+  const idPar = original.traspaso;
+  if (!idPar) return false;
+  const par = await idb.get('historial', idPar);
+  if (!par || par.deshecho) return false;
+  if (await idb.get('pendientes', idPar)) {
+    anulados[idPar] = true;
+    await idb.borrar('pendientes', idPar);
+    await marcarHistorial(idPar, 'anulado: el traspaso no se pudo hacer');
+    return false;
+  }
+  if (par.estado !== 'ok') return false; // la otra mitad tampoco se guardó: no hay nada que compensar
+  const mov = { id: nuevoId(), fecha: new Date().toISOString(), usuario: ajustes.usuario || '', tipo: par.tipo === 'ENTRADA' ? 'SALIDA' : 'ENTRADA',
+    codigo: par.codigo, cantidad: par.cantidad, caducidad: par.caducidad || '', almacen: par.almacen, estante: par.estante || '', nota: 'Anula un traspaso que no se pudo hacer' };
+  await idb.poner('pendientes', mov);
+  await idb.poner('historial', Object.assign({}, mov, { nombre: nombreDe(mov.codigo), estado: 'pendiente', esDeshacer: true }));
+  par.deshecho = true;
+  await idb.poner('historial', par);
+  return true; // hay un movimiento nuevo que enviar
+}
+
 /* ---------- Consulta de stock ---------- */
 async function abrirStock() {
   pendientesCache = await idb.todos('pendientes');
@@ -1468,6 +1618,7 @@ function pintarFicha(anim) {
   $('fs-ant').disabled = i <= 0; $('fs-sig').disabled = i >= n - 1;
   $('fs-ant').parentNode.classList.toggle('oculto', n < 2);
   $('fs-salida').disabled = !total;
+  $('fs-mover').disabled = !total;
   if (!foto) traerMiniatura(c, function () { if (fichaActual.codigo === c && $('ficha-sheet').classList.contains('on')) pintarFicha(''); });
 }
 
@@ -1506,9 +1657,12 @@ function pintarRevision() {
       '<div class="muted">' + esc(m.caducidad || 'sin cad.') + ' · ' + esc(m.almacen) + (m.estante ? ' · ' + esc(m.estante) : '') + ' · ' +
       new Date(m.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + (m.usuario ? ' · ' + esc(m.usuario) : '') + '</div>' +
       '<div class="error" style="margin:6px 0">Motivo: ' + esc(x.motivo) + '</div>' +
-      '<div class="fila"><button class="btn btn-sec" data-a="corregir" data-i="' + i + '">✏️ Corregir</button>' +
-      '<button class="btn btn-sec" data-a="reintentar" data-i="' + i + '">🔄 Reintentar</button>' +
-      '<button class="btn btn-peligro" data-a="descartar" data-i="' + i + '">🗑️ Descartar</button></div></div>';
+      (m.traspaso
+        ? '<div class="muted" style="margin-bottom:6px">Era un traspaso y se ha anulado entero: no se ha movido nada. Si procede, vuelve a hacerlo.</div>' +
+          '<div class="fila"><button class="btn btn-sec" data-a="descartar" data-i="' + i + '">Entendido</button></div></div>'
+        : '<div class="fila"><button class="btn btn-sec" data-a="corregir" data-i="' + i + '">✏️ Corregir</button>' +
+          '<button class="btn btn-sec" data-a="reintentar" data-i="' + i + '">🔄 Reintentar</button>' +
+          '<button class="btn btn-peligro" data-a="descartar" data-i="' + i + '">🗑️ Descartar</button></div></div>');
   }).join('') + '<p class="muted" style="font-size:13px">«Reintentar» sirve si ya has corregido la causa (p. ej. registrando antes la entrada que faltaba).</p>';
   cada($('r-lista').querySelectorAll('button[data-a]'), function (b) {
     b.onclick = function () { accionRevision(b.dataset.a, Number(b.dataset.i)); };
@@ -2011,17 +2165,21 @@ async function sincronizar(manual) {
     for (let i = 0; i < pendientes.length; i += 100) lotes.push(pendientes.slice(i, i + 100));
     if (!lotes.length && (fichas.length || Object.keys(fotosPend).length)) lotes.push([]);
 
+    const anulados = {}; // mitades de traspaso que ya no hay que enviar
     for (let i = 0; i < lotes.length; i++) {
-      const movimientos = lotes[i].map(function (m) { const c = Object.assign({}, m); delete c._producto; return c; });
+      const movimientos = lotes[i].filter(function (m) { return !anulados[m.id]; }).map(function (m) { const c = Object.assign({}, m); delete c._producto; delete c.traspaso; return c; });
       const productos = i === 0 ? fichas : [];
       const r = await llamar('POST', { accion: 'movimientos', movimientos: movimientos, productos: productos });
       for (const id of r.aceptados) { await idb.borrar('pendientes', id); await marcarHistorial(id, 'ok'); }
       for (const x of r.rechazados) {
         // No se pierde: va a la bandeja de revisión con el motivo y los datos originales
         const original = lotes[i].find(function (m) { return m.id === x.id; });
-        if (original) { revision.push({ mov: Object.assign({}, original), motivo: x.motivo, fecha: new Date().toISOString() }); }
+        // De un traspaso rechazado solo se avisa una vez, aunque el servidor rechace sus dos mitades
+        const yaAvisado = original && original.traspaso && revision.some(function (r) { return r.mov.id === original.traspaso; });
+        if (original && !yaAvisado) { revision.push({ mov: Object.assign({}, original), motivo: x.motivo, fecha: new Date().toISOString() }); }
         await idb.borrar('pendientes', x.id);
         await marcarHistorial(x.id, 'no se guardó: ' + x.motivo);
+        if (original && original.traspaso && await anularParDeTraspaso(original, anulados)) resincronizar = true;
       }
       if (r.rechazados.length) await idb.poner('kv', revision, 'revision');
       if (i === 0 && productos.length) {

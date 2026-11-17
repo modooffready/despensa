@@ -56,6 +56,9 @@ test('pantalla Objetivos: avance por línea y lista de la compra', async functio
   const navegador = await chromium.launch();
   try {
     const p = await navegador.newPage({ viewport: { width: 390, height: 800 } });
+    // Sondeo por tiempo y no por fotogramas: en un navegador sin pantalla los fotogramas pueden pararse y la espera no terminaría nunca
+    const esperar = p.waitForFunction.bind(p);
+    p.waitForFunction = function (fn, arg, op) { return esperar(fn, arg, Object.assign({ polling: 100 }, op || {})); };
     const errores = [];
     p.on('pageerror', function (e) { errores.push(e.message); });
     await p.route('https://script.google.com/**', function (rt) {
