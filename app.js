@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.10.0';
+const VERSION = '2.10.1';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -143,7 +143,9 @@ function pintarNav() {
   const conBarra = PANTALLAS_CON_BARRA.indexOf(pantallaActual) >= 0;
   $('pestanas').classList.toggle('oculto', !conBarra);
   document.body.classList.toggle('con-nav', conBarra);
-  $('fab-escanear').classList.toggle('oculto', !conBarra || pantallaActual === 'inicio');
+  const conFab = conBarra && pantallaActual !== 'inicio';
+  $('fab-escanear').classList.toggle('oculto', !conFab);
+  document.body.classList.toggle('con-fab', conFab);
   const enCompra = pantallaActual === 'objetivos' && objVista.modo === 'compra';
   const activa = { 't-inicio': pantallaActual === 'inicio', 't-stock': pantallaActual === 'stock',
     't-objetivos': pantallaActual === 'objetivos' && !enCompra, 't-compra': enCompra };

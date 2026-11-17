@@ -54,7 +54,9 @@
   .barra-nav svg, .fab svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
   .barra-nav button.activo { color:var(--verde); font-weight:700; }
   .barra-nav button.activo .nav-ico { background:#cfe3d3; }
+  /* Hueco al final para que ni la barra ni el botón flotante tapen lo último de la pantalla */
   body.con-nav main { padding-bottom:calc(96px + env(safe-area-inset-bottom)); }
+  body.con-fab main { padding-bottom:calc(156px + env(safe-area-inset-bottom)); }
   /* Escanear siempre a mano en las pantallas con barra (en Inicio ya está el botón grande) */
   .fab { position:fixed; right:14px; bottom:calc(78px + env(safe-area-inset-bottom)); z-index:6; height:58px; padding:0 20px; border:0; border-radius:18px; background:var(--verde); color:#fff; font-size:18px; font-weight:700; display:flex; align-items:center; gap:10px; box-shadow:0 6px 16px rgba(0,0,0,.28); }
   header h1 { font-size:20px; margin:0; }
@@ -453,6 +455,6 @@
   <button id="t-objetivos"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="5"></circle><circle cx="12" cy="12" r="1"></circle></svg></span>Objetivos</button>
   <button id="t-compra"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h2l2.5 12h10L20 7H6.5"></path><circle cx="9" cy="20" r="1.5"></circle><circle cx="17" cy="20" r="1.5"></circle></svg></span>Compra</button>
 </nav>
-<script src="app.js?v=2.10.0"></script>
+<script src="app.js?v=2.10.1"></script>
 </body>
 </html>

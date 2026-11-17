@@ -309,9 +309,18 @@ test('v2.10.0: barra de abajo con la sección activa y botón flotante de Escane
     const tapa = await p.evaluate(function () {
       window.scrollTo(0, document.body.scrollHeight);
       const ult = document.querySelector('#s-lista .prod:last-child').getBoundingClientRect(), barra = document.getElementById('pestanas').getBoundingClientRect();
-      return ult.bottom <= barra.top;
+      const fab = document.getElementById('fab-escanear').getBoundingClientRect();
+      return ult.bottom <= barra.top && ult.bottom <= fab.top;
     });
-    assert.ok(tapa, 'el último producto queda por encima de la barra');
+    assert.ok(tapa, 'al llegar al final, el último producto queda por encima de la barra y del botón flotante');
+    // Lo mismo en Compra: el último botón (Copiar) se ve entero
+    await p.click('#t-compra');
+    await p.waitForSelector('#o-compra:not(.oculto)');
+    const copiar = await p.evaluate(function () {
+      window.scrollTo(0, document.body.scrollHeight);
+      return document.getElementById('o-copiar').getBoundingClientRect().bottom <= document.getElementById('fab-escanear').getBoundingClientRect().top;
+    });
+    assert.ok(copiar, 'el botón Copiar no queda bajo el botón flotante');
     assert.deepStrictEqual(a.errores, []);
   } finally { await a.cerrar(); }
 });
