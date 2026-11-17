@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.10.3';
+const VERSION = '2.10.4';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -428,7 +428,8 @@ function incompletos() {
 
 function nombreDe(codigo) {
   const p = catalogo[codigo];
-  return (p && p.nombre) || codigo;
+  // Siempre texto: la hoja devuelve como número un nombre que solo tiene cifras
+  return String((p && p.nombre) || codigo);
 }
 
 async function pintarHistorial() {
@@ -1861,7 +1862,7 @@ function sugerirReparto(porCodigo, destino) {
     cat.lineas.forEach(function (l) {
       let resto = l.falta;
       (disponibles[l.o.id] || []).sort(function (a, b) {
-        return (b.lote.caducidad || '9999').localeCompare(a.lote.caducidad || '9999') || nombreDe(a.codigo).localeCompare(nombreDe(b.codigo), 'es');
+        return String(b.lote.caducidad || '9999').localeCompare(String(a.lote.caducidad || '9999')) || nombreDe(a.codigo).localeCompare(nombreDe(b.codigo), 'es');
       }).forEach(function (x) {
         if (resto <= 1e-9) return;
         const n = Math.min(x.lote.stock, Math.ceil(resto / x.aporte - 1e-9));
@@ -2049,11 +2050,20 @@ function pintarObjetivos() {
   if ($('o-ver-sin')) $('o-ver-sin').onclick = function () { objVista.verSinLinea = !objVista.verSinLinea; pintarObjetivos(); };
 
   if (objVista.modo === 'compra') {
-    // Primero lo que ya se tiene en el lugar principal y solo hay que mover; después, lo que hay que comprar
-    const rep = sugerirReparto(lotesTodos(pendientesCache), objVista.almacen);
-    objVista.reparto = rep.sugerencias;
-    const hayReparto = rep.sugerencias.length > 0;
-    $('o-reparto').innerHTML = !hayReparto ? '' :
+    // Primero se vacía lo de Objetivos, para que un fallo nunca deje sus tarjetas debajo del título de Compra
+    $('o-lista').innerHTML = '';
+    $('o-compra').classList.remove('oculto');
+    // Primero lo que ya se tiene en el lugar principal y solo hay que mover; después, lo que hay que comprar.
+    // Si el cálculo falla con algún dato raro de la hoja, se avisa y se muestra la lista de la compra sin descontar nada.
+    let rep = null, fallo = '';
+    try { rep = sugerirReparto(lotesTodos(pendientesCache), objVista.almacen); }
+    catch (err) { fallo = String(err && err.message || err); console.error('Reparto', err); }
+    objVista.reparto = rep ? rep.sugerencias : [];
+    const hayReparto = objVista.reparto.length > 0;
+    $('o-reparto').innerHTML = fallo
+      ? '<div class="tarjeta" style="border-left:5px solid var(--rojo)"><b>⚠️ No se pudo calcular qué pasar desde el trastero.</b>' +
+        '<div class="muted" style="margin-top:4px">La lista de abajo no lo descuenta. Haz una captura de este aviso y mándasela a Claude: «' + esc(fallo) + '»</div></div>'
+      : !hayReparto ? '' :
       '<div class="tarjeta" id="o-reparto-caja"><h2 style="font-size:18px;margin:0 0 4px">1 · Pasa de ' + esc(rep.origen) + ' a ' + esc(objVista.almacen) + '</h2>' +
       '<p class="muted" style="margin:0 0 6px">Ya lo tienes: solo hay que moverlo. Pulsa «Hecho» cuando lo hayas pasado.</p>' +
       rep.sugerencias.map(function (x, i) {
@@ -2066,11 +2076,9 @@ function pintarObjetivos() {
     });
     $('o-compra-titulo').textContent = hayReparto ? '2 · Compra para ' + objVista.almacen : '';
     $('o-compra-titulo').classList.toggle('oculto', !hayReparto);
-    const t = textoListaCompra(r, objVista.almacen, rep);
-    $('o-lista').innerHTML = '';
-    $('o-compra').classList.remove('oculto');
+    const t = textoListaCompra(r, objVista.almacen, rep || undefined);
     $('o-texto').textContent = t || (hayReparto ? '✅ Con lo que puedes traer no hace falta comprar nada.' : '✅ No falta nada: todos los objetivos están completos.');
-    objVista.textoMarcar = textoListaMarcar(r, rep);
+    objVista.textoMarcar = textoListaMarcar(r, rep || undefined);
     $('o-compartir').disabled = !t; $('o-copiar').disabled = !t; $('o-keep').disabled = !t;
   } else {
     $('o-compra').classList.add('oculto');

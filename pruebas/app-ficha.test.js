@@ -44,8 +44,8 @@ test('editar ficha no registra movimiento; deshacer vale para cualquier movimien
       rt.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign({ aceptados: (b.movimientos || []).map(function (m) { return m.id; }), rechazados: [] }, DATOS)) });
     });
     await p.goto('http://localhost:' + srv.address().port + '/');
-    await p.waitForFunction(function () { return typeof abrirAjustes === 'function'; });
-    await p.evaluate(function () { abrirAjustes(); });
+    await p.waitForFunction(function () { return typeof pantallaActual !== 'undefined' && pantallaActual === 'ajustes'; }); // sin servidor configurado la app abre Ajustes sola al arrancar: rellenar después, o lo vaciaría
+    await p.evaluate(function () { return abrirAjustes(); }); // esperar a que termine de abrir: si no, puede borrar lo que se escribe después
     await p.fill('#a-url', 'https://script.google.com/macros/s/X/exec');
     await p.fill('#a-token', 'k'); await p.fill('#a-usuario', 'Prueba');
     await p.evaluate(function () { return guardarAjustes(); });

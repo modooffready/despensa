@@ -54,10 +54,10 @@ test('completa desde Open Food Facts los productos sin nombre y no se atasca con
         objetivos: [], config: [{ tipo: 'ESTANCIA', valor: T, padre: '', activo: true }], productos: servidor, stock: [] }) });
     });
     await p.goto('http://localhost:' + srv.address().port + '/');
-    await p.waitForFunction(function () { return typeof abrirAjustes === 'function'; });
+    await p.waitForFunction(function () { return typeof pantallaActual !== 'undefined' && pantallaActual === 'ajustes'; }); // sin servidor configurado la app abre Ajustes sola al arrancar: rellenar después, o lo vaciaría
     // Una foto pendiente que el servidor va a rechazar
     await p.evaluate(async function () { fotosPend['3560070468751'] = 'data:image/jpeg;base64,AAAA'; await idb.poner('kv', fotosPend, 'fotosPend'); });
-    await p.evaluate(function () { abrirAjustes(); });
+    await p.evaluate(function () { return abrirAjustes(); }); // esperar a que termine de abrir: si no, puede borrar lo que se escribe después
     await p.fill('#a-url', 'https://script.google.com/macros/s/X/exec');
     await p.fill('#a-token', 'k'); await p.fill('#a-usuario', 'Prueba');
     await p.evaluate(function () { return guardarAjustes(); });

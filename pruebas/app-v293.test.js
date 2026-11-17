@@ -43,8 +43,8 @@ async function montar(opciones) {
     return opciones.servidor(JSON.parse(rt.request().postData() || '{}'), rt);
   });
   await p.goto('http://localhost:' + srv.address().port + '/');
-  await p.waitForFunction(function () { return typeof abrirAjustes === 'function'; });
-  await p.evaluate(function () { abrirAjustes(); });
+  await p.waitForFunction(function () { return typeof pantallaActual !== 'undefined' && pantallaActual === 'ajustes'; }); // sin servidor configurado la app abre Ajustes sola al arrancar: rellenar después, o lo vaciaría
+  await p.evaluate(function () { return abrirAjustes(); }); // esperar a que termine de abrir: si no, puede borrar lo que se escribe después
   await p.fill('#a-url', 'https://script.google.com/macros/s/X/exec');
   await p.fill('#a-token', 'k'); await p.fill('#a-usuario', 'Prueba');
   return { p: p, errores: errores, cerrar: async function () { await navegador.close(); srv.close(); } };
@@ -492,6 +492,56 @@ test('v2.10.3: Compra propone primero qué pasar del trastero a la Caja 72 h y d
     assert.strictEqual(srv.stock['L|' + lejos + '|' + T + '|Estante 6'], 0);
     assert.deepStrictEqual(await p.evaluate(function () { return objVista.reparto.map(function (x) { return x.cantidad + ' ' + x.codigo; }); }), ['4 B', '5 S']);
     assert.strictEqual(await p.evaluate(function () { return pantallaActual + ' ' + objVista.modo + ' ' + objVista.almacen; }), 'objetivos compra Caja 72 h', 'se queda en la misma pantalla');
+    assert.deepStrictEqual(a.errores, []);
+  } finally { await a.cerrar(); }
+});
+
+test('v2.10.4: Compra no se rompe con datos raros de la hoja (nombre numérico, producto sin ficha, caducidad con día)', async function () {
+  const fila = function (id, cat, desc, cant, uni, alm) { return { id: id, categoria: cat, descripcion: desc, cantidad_objetivo: cant, unidad: uni, almacen: alm, notas: '' }; };
+  const inicial = {};
+  inicial['N|' + lejos + '|' + T + '|Estante 5'] = 2;          // nombre que la hoja guarda como número
+  inicial['S|' + lejos + '|' + T + '|Estante 5'] = 2;
+  inicial['Z|' + lejos + '|' + T + '|Estante 5'] = 1;          // con stock pero sin fila en Productos
+  inicial['D|' + lejos + '-15|' + T + '|Estante 5'] = 1;       // caducidad con día
+  const srv = servidorConStock(inicial, {
+    config: CONFIG_MOVER.concat([{ tipo: 'CATEGORIA', valor: 'CONSERVAS', padre: 'DESPENSA', activo: true }]),
+    objetivos: [fila('TA-08', 'CONSERVAS', 'Atún / sardinas / caballa en lata', 30, 'uds', T), fila('CJ-03', 'CONSERVAS', 'Atún / sardinas en lata', 9, 'uds', CAJA),
+      fila('CJ-99', 'CONSERVAS', 3, '', 'uds', CAJA)],
+    productos: [{ codigo: 'N', nombre: 1906, categoria: 'CONSERVAS', linea_objetivo: 'TA-08' },
+      { codigo: 'S', nombre: 'Sardinas', categoria: 'CONSERVAS', linea_objetivo: 'TA-08' },
+      { codigo: 'D', nombre: 'Atún claro', categoria: 'CONSERVAS', linea_objetivo: 'TA-08' }] });
+  const a = await montar({ off: function (c, rt) { return json(rt, { status: 0 }, 404); }, servidor: srv.responder });
+  try {
+    const p = a.p;
+    await p.evaluate(function () { return guardarAjustes(); });
+    await p.waitForFunction(function () { return !sincronizando && stockServidor.length === 4 && objetivos.length === 3; });
+    // Primero Objetivos con una categoría abierta (lo que tenía Sergio en pantalla), después Compra de la Caja
+    await p.click('#t-objetivos');
+    await p.waitForSelector('#pantalla-objetivos:not(.oculto)');
+    await p.click('#o-almacenes .chip[data-a="Caja 72 h"]');
+    await p.click('.o-cab[data-cat="CONSERVAS"]');
+    await p.click('#t-compra');
+    await p.waitForSelector('#o-compra:not(.oculto)');
+    const e = await p.evaluate(function () {
+      return { tarjetas: document.querySelectorAll('#o-lista .o-cat').length, sug: objVista.reparto.map(function (x) { return x.cantidad + ' ' + x.codigo; }),
+        texto: document.getElementById('o-texto').textContent };
+    });
+    assert.strictEqual(e.tarjetas, 0, 'en Compra no quedan las tarjetas de Objetivos');
+    assert.deepStrictEqual(e.sug.sort(), ['1 D', '2 N', '2 S']);
+    assert.match(e.texto, /Atún \/ sardinas en lata: faltan 4 uds/);
+    // Si el cálculo del reparto falla, se avisa en pantalla y la lista de la compra sigue saliendo
+    await p.click('#t-objetivos');
+    await p.waitForSelector('#o-lista .o-cat');
+    const f = await p.evaluate(function () {
+      window.sugerirReparto = function () { throw new Error('dato raro'); };
+      objVista.modo = 'compra'; pintarObjetivos();
+      return { tarjetas: document.querySelectorAll('#o-lista .o-cat').length, aviso: document.getElementById('o-reparto').textContent,
+        texto: document.getElementById('o-texto').textContent, visible: !document.getElementById('o-compra').classList.contains('oculto') };
+    });
+    assert.strictEqual(f.tarjetas, 0);
+    assert.ok(f.visible);
+    assert.match(f.aviso, /No se pudo calcular qué pasar desde el trastero.*dato raro/);
+    assert.match(f.texto, /Atún \/ sardinas en lata: faltan 9 uds/, 'sin reparto, la lista no descuenta nada');
     assert.deepStrictEqual(a.errores, []);
   } finally { await a.cerrar(); }
 });
