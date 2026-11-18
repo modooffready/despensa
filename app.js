@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.10.6';
+const VERSION = '2.10.7';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -277,9 +277,9 @@ function enlazarEventos() {
   });
   $('c-lugar').onchange = async function () { ajustes.grupo = $('c-lugar').value; await guardarAjustesLocales(); pintarContexto(); };
   $('i-objetivos').onclick = function () { objVista.modo = 'categorias'; objVista.almacen = $('i-objetivos').dataset.lugar; abrirObjetivos(); };
-  ['DESPENSA', 'MATERIAL', 'TODO'].forEach(function (m) {
-    $('s-m-' + m).onclick = function () { stockModo = m; pintarStock(); };
-  });
+  $('s-lugar').onchange = function () { stockGrupo = $('s-lugar').value; pintarStock(); };
+  $('s-tipo').onchange = function () { stockModo = $('s-tipo').value; pintarStock(); };
+  $('s-vista').onchange = function () { vistaStock = $('s-vista').value; pintarStock(); };
   $('l-modo').onchange = pintarListas;
   $('btn-sincronizar').onclick = function () { sincronizar(true); };
   $('btn-escanear').onclick = abrirEscaner;
@@ -354,9 +354,6 @@ function enlazarEventos() {
   $('f-cancelar').onclick = function () { volverA(origenFormulario); };
 
   $('s-buscar').oninput = pintarStock;
-  ['producto', 'categoria', 'estancia'].forEach(function (v) {
-    $('s-v-' + v).onclick = function () { vistaStock = v; pintarStock(); };
-  });
 
   $('a-guardar').onclick = guardarAjustes;
   $('a-probar').onclick = probarConexion;
@@ -1486,23 +1483,33 @@ function estadoCaducidad(cad) {
   return '';
 }
 
-function htmlLote(l, conSitio) {
+// Una línea por lote: la caducidad como etiqueta de color y en palabras, dónde está y cuántas unidades.
+// sitio: 'todo' (lugar y estante), 'estante' (ya se sabe el lugar) o 'nada' (la cabecera del grupo ya lo dice)
+function htmlLote(l, sitio) {
   const p = catalogo[l.codigo] || {};
   const e = p.tipo === 'EQUIPO' ? '' : estadoCaducidad(l.caducidad);
-  return '<span class="' + e + '">' + esc(l.caducidad || 'sin cad.') + (e === 'caducado' ? ' (caducado)' : '') + '</span>' +
-    (conSitio ? ' · ' + esc(l.almacen) + (l.estante ? ' · ' + esc(l.estante) : '') : '') + ' · ' + l.stock + ' uds';
+  const mes = mesAnio(l.caducidad).replace(/^caduca /, '');
+  const etiqueta = !l.caducidad ? '<span class="cad sin">Sin caducidad</span>'
+    : e === 'caducado' ? '<span class="cad caducado">Caducado · ' + esc(mes) + '</span>'
+    : e === 'pronto' ? '<span class="cad pronto">Caduca pronto · ' + esc(mes) + '</span>'
+    : '<span class="cad">Caduca ' + esc(mes) + '</span>';
+  const donde = sitio === 'todo' ? esc(l.almacen) + (l.estante ? ' · ' + esc(l.estante) : '') + ' · '
+    : sitio === 'estante' && l.estante ? esc(l.estante) + ' · ' : '';
+  return '<div class="s-lote">' + etiqueta + '<span>' + donde + l.stock + (l.stock === 1 ? ' unidad' : ' unidades') + '</span></div>';
 }
 
 function pintarFiltrosStock() {
-  $('s-grupos').innerHTML = ['<button class="' + (!stockGrupo ? 'activo' : '') + '" data-g="">Todas</button>'].concat(grupos().map(function (x) {
-    return '<button class="' + (enGrupo(x, stockGrupo) ? 'activo' : '') + '" data-g="' + esc(x) + '" title="' + esc(x) + '">' + esc(nombreCorto(x)) + '</button>';
-  })).join('');
-  cada($('s-grupos').children, function (b) { b.onclick = function () { stockGrupo = b.dataset.g; pintarStock(); }; });
-  ['DESPENSA', 'MATERIAL', 'TODO'].forEach(function (m) { $('s-m-' + m).classList.toggle('activo', stockModo === m); });
+  // Lugar: lista con los nombres enteros y «Todos los lugares» (antes, botones cortados)
+  opciones($('s-lugar'), grupos());
+  const todos = document.createElement('option');
+  todos.value = ''; todos.textContent = 'Todos los lugares';
+  $('s-lugar').insertBefore(todos, $('s-lugar').firstChild);
+  $('s-lugar').value = grupos().find(function (g) { return enGrupo(g, stockGrupo); }) || '';
+  $('s-tipo').value = stockModo;
+  $('s-vista').value = vistaStock;
 }
 
 function pintarStock() {
-  ['producto', 'categoria', 'estancia'].forEach(function (v) { $('s-v-' + v).classList.toggle('activo', v === vistaStock); });
   const porCodigo = lotesTodos(pendientesCache);
   const q = normalizar($('s-buscar').value);
   pintarFiltrosStock();
@@ -1527,34 +1534,42 @@ function pintarStock() {
 
   const productos = {};
   lotes.forEach(function (l) { productos[l.codigo] = true; });
-  const caducados = lotes.filter(function (l) {
-    return (catalogo[l.codigo] || {}).tipo !== 'EQUIPO' && estadoCaducidad(l.caducidad) === 'caducado';
-  }).length;
-  $('s-resumen').textContent = Object.keys(productos).length + ' productos' + (caducados ? ' · ⚠️ ' + caducados + ' lotes caducados' : '') +
+  // Productos con algo caducado (un producto con dos fechas caducadas cuenta una vez)
+  const conCaducado = {};
+  lotes.forEach(function (l) {
+    if ((catalogo[l.codigo] || {}).tipo !== 'EQUIPO' && estadoCaducidad(l.caducidad) === 'caducado') conCaducado[l.codigo] = true;
+  });
+  const caducados = Object.keys(conCaducado).length;
+  const nProd = Object.keys(productos).length;
+  $('s-resumen').textContent = nProd + (nProd === 1 ? ' producto' : ' productos') + (caducados ? ' · ⚠️ ' + caducados + (caducados === 1 ? ' con algo caducado' : ' con algo caducado') : '') +
     (ajustes.ultimaSync ? ' · datos de ' + new Date(ajustes.ultimaSync).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
   if (!lotes.length) {
     // Explicar por qué sale vacío y ofrecer quitar el filtro
-    let txt = q ? 'Nada coincide con la búsqueda.' : (soloCaducan ? 'No hay lotes que caduquen pronto.' : 'No hay stock registrado.');
+    let txt = q ? 'Nada coincide con la búsqueda.' : (soloCaducan ? 'Nada caduca en los próximos 3 meses.' : 'No hay nada guardado todavía.');
     if (total) {
       const partes = [];
-      if (fueraSitio) partes.push(fueraSitio + ' en otras estancias');
-      if (fueraModo) partes.push(fueraModo + ' en ' + (stockModo === 'DESPENSA' ? 'Material' : 'Despensa'));
-      txt = 'Con estos filtros no sale nada. Hay ' + total + ' lotes: ' + partes.join(' y ') + '.';
+      if (fueraSitio) partes.push('en otros lugares');
+      if (fueraModo) partes.push('en ' + (stockModo === 'DESPENSA' ? 'Material' : 'Despensa'));
+      txt = 'Con estos filtros no sale nada, pero hay cosas ' + partes.join(' y ') + '.';
     }
     $('s-lista').innerHTML = '<p class="muted">' + esc(txt) + '</p>' + (total ? '<button class="btn btn-sec" id="s-ver-todo">Ver todo</button>' : '');
     if ($('s-ver-todo')) $('s-ver-todo').onclick = function () { stockGrupo = ''; stockModo = 'TODO'; pintarStock(); };
     return;
   }
 
+  // Tarjeta de producto: foto (si el móvil la tiene) o el color e icono de su categoría, nombre, lotes y total
   function tarjetaProducto(codigo, susLotes, conSitio) {
     const p = catalogo[codigo] || {};
     const total = susLotes.reduce(function (s, l) { return s + l.stock; }, 0);
-    return '<div class="prod" data-c="' + esc(codigo) + '"><div class="prod-cab"><span>' + esc(p.nombre || '(sin nombre)') +
-      (p.marca ? ' <span class="muted">· ' + esc(p.marca) + '</span>' : '') +
-      (p.tipo === 'EQUIPO' ? ' <span class="tag-cat tag-equipo">Equipo</span>' : '') +
-      '</span><span class="prod-total">' + total + '</span></div>' +
-      susLotes.map(function (l) { return '<div class="lote">' + htmlLote(l, conSitio) + '</div>'; }).join('') + '</div>';
+    const foto = fotoDe(codigo);
+    const color = COLOR_CAT[p.categoria] || '#8a8f87';
+    return '<div class="prod s-prod" data-c="' + esc(codigo) + '">' +
+      '<div class="s-ico" aria-hidden="true" style="background:' + color + '">' + (foto ? '<img loading="lazy" alt="" src="' + esc(foto) + '">' : (ICONO_CAT[p.categoria] || '📦')) + '</div>' +
+      '<div class="s-cuerpo"><div class="s-nombre">' + esc(p.nombre || '(sin nombre)') + '</div>' +
+      (p.marca || p.tipo === 'EQUIPO' ? '<div class="s-marca">' + esc(p.marca || '') + (p.tipo === 'EQUIPO' ? ' <span class="tag-cat tag-equipo">Equipo</span>' : '') + '</div>' : '') +
+      susLotes.map(function (l) { return htmlLote(l, conSitio); }).join('') + '</div>' +
+      '<div class="s-num"><b>' + total + '</b><span>' + (total === 1 ? 'unidad' : 'unidades') + '</span></div></div>';
   }
   function agruparPor(lista, clave) {
     const g = {};
@@ -1567,9 +1582,11 @@ function pintarStock() {
       .map(function (c) { return tarjetaProducto(c, g[c], conSitio); }).join('');
   }
 
+  // Con un lugar elegido no se repite su nombre en cada fila (salvo si el lugar tiene varias partes, como las mochilas)
+  const sitio = !stockGrupo || estanciasDelGrupo(stockGrupo).length > 1 ? 'todo' : 'estante';
   let html = '';
   if (vistaStock === 'producto') {
-    html = porProducto(lotes, true);
+    html = porProducto(lotes, sitio);
   } else if (vistaStock === 'categoria') {
     const orden = categorias();
     const g = agruparPor(lotes, function (l) { return (catalogo[l.codigo] || {}).categoria || 'SIN CATEGORÍA'; });
@@ -1577,7 +1594,7 @@ function pintarStock() {
       const ia = orden.indexOf(a), ib = orden.indexOf(b);
       return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || a.localeCompare(b);
     }).forEach(function (cat) {
-      html += '<div class="grupo">' + esc(bonito(cat)) + '</div>' + porProducto(g[cat], true);
+      html += '<div class="grupo">' + esc(bonito(cat)) + '</div>' + porProducto(g[cat], sitio);
     });
   } else {
     const ordenE = estancias();
@@ -1590,10 +1607,14 @@ function pintarStock() {
       return (ja < 0 ? 999 : ja) - (jb < 0 ? 999 : jb) || pa[1].localeCompare(pb[1]);
     }).forEach(function (k) {
       const p = k.split('|');
-      html += '<div class="grupo">' + esc(p[0]) + (p[1] ? ' · ' + esc(p[1]) : '') + '</div>' + porProducto(g[k], false);
+      html += '<div class="grupo">' + esc(p[0]) + (p[1] ? ' · ' + esc(p[1]) : '') + '</div>' + porProducto(g[k], 'nada');
     });
   }
   $('s-lista').innerHTML = html;
+  // Sin conexión, una foto de Open Food Facts no carga: se deja el icono de la categoría
+  cada($('s-lista').querySelectorAll('.s-ico img'), function (img) {
+    img.onerror = function () { const c = catalogo[img.closest('.prod').dataset.c] || {}; img.parentNode.textContent = ICONO_CAT[c.categoria] || '📦'; };
+  });
   cada($('s-lista').querySelectorAll('.prod'), function (d) {
     d.onclick = function () { abrirFicha(d.dataset.c, listaVisible('#s-lista')); };
   });

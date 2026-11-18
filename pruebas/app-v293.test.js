@@ -657,3 +657,74 @@ test('v2.10.6: Inicio con el lugar en una lista, resumen de objetivos, avisos co
     assert.deepStrictEqual(a.errores, []);
   } finally { await a.cerrar(); }
 });
+
+test('v2.10.7: Stock con filtros en listas, caducidad en palabras y en color, y unidades', async function () {
+  const pasado = (new Date().getFullYear() - 1) + '-04';
+  const inicial = {};
+  inicial['B|' + lejos + '|' + T + '|Estante 5'] = 4;
+  inicial['M|' + cerca + '|' + T + '|Estante 3'] = 1;
+  inicial['M|' + pasado + '|' + T + '|Estante 3'] = 1;
+  inicial['P|' + '' + '|Peugeot 5008|'] = 2;                 // equipo, sin caducidad, en el coche
+  inicial['J|' + lejos + '|' + T + '|Estante 1'] = 1;        // jabón (material)
+  const srv = servidorConStock(inicial, {
+    config: CONFIG_MOVER.concat([{ tipo: 'CATEGORIA', valor: 'CONSERVAS', padre: 'DESPENSA', activo: true },
+      { tipo: 'CATEGORIA', valor: 'EQUIPO', padre: 'MATERIAL', activo: true }, { tipo: 'ESTANCIA', valor: 'Peugeot 5008', padre: '', activo: true }]),
+    productos: [{ codigo: 'B', nombre: 'Bonito del norte en migas', marca: 'Carrefour', categoria: 'CONSERVAS' },
+      { codigo: 'M', nombre: 'Macarrón', categoria: 'CONSERVAS' },
+      { codigo: 'P', nombre: 'Manta térmica', categoria: 'EQUIPO', tipo: 'EQUIPO' },
+      { codigo: 'J', nombre: 'Jabón de manos', categoria: 'HIGIENE' }] });
+  const a = await montar({ off: function (c, rt) { return json(rt, { status: 0 }, 404); }, servidor: srv.responder });
+  try {
+    const p = a.p;
+    await p.evaluate(function () { return guardarAjustes(); });
+    await p.waitForFunction(function () { return !sincronizando && stockServidor.length === 5; });
+    await p.click('#t-stock');
+    await p.waitForSelector('#pantalla-stock:not(.oculto)');
+    // El botón de la barra abre Stock en el lugar de Inicio (Trastero) y con su tipo (Despensa)
+    assert.deepStrictEqual(await p.$$eval('#s-lugar option', function (o) { return o.map(function (x) { return x.textContent; }); }),
+      ['Todos los lugares', T, 'Peugeot 5008', 'Caja 72 h']);
+    assert.strictEqual(await p.inputValue('#s-lugar'), T);
+    assert.strictEqual(await p.inputValue('#s-tipo'), 'DESPENSA');
+    // Texto de cada tarjeta sin el icono, con los trozos separados por « | »
+    const tarjetas = function () {
+      return p.$$eval('#s-lista .prod', function (d) {
+        return d.map(function (x) {
+          const trozos = [];
+          x.querySelectorAll('.s-nombre, .s-marca, .s-lote .cad, .s-lote > span:not(.cad), .s-num b, .s-num span').forEach(function (e) { trozos.push(e.textContent.trim()); });
+          return trozos.join(' | ');
+        });
+      });
+    };
+    let t = await tarjetas();
+    assert.strictEqual(t.length, 2, 'en el trastero, solo comida: bonito y macarrón');
+    assert.strictEqual(t[0], 'Bonito del norte en migas | Carrefour | Caduca may ' + lejos.split('-')[0] + ' | Estante 5 · 4 unidades | 4 | unidades', 'con un lugar elegido no se repite su nombre');
+    assert.match(t[1], /^Macarrón \| Caducado · abr \d{4} \| Estante 3 · 1 unidad \| Caduca pronto · \w{3} \d{4} \| Estante 3 · 1 unidad \| 2 \| unidades$/);
+    assert.match(await p.textContent('#s-resumen'), /^2 productos · ⚠️ 1 con algo caducado/);
+    assert.strictEqual(await p.locator('#s-lista .s-ico').first().evaluate(function (e) { return getComputedStyle(e).backgroundColor; }), 'rgb(93, 107, 58)', 'color de Conservas');
+    if (process.env.CAPTURAS) await p.screenshot({ path: '/tmp/stock.png' });
+    // Todos los lugares y todo: aparece la manta del coche, sin caducidad
+    await p.selectOption('#s-lugar', '');
+    await p.selectOption('#s-tipo', 'TODO');
+    t = await tarjetas();
+    assert.strictEqual(t.length, 4);
+    assert.ok(t.indexOf('Manta térmica | Equipo | Sin caducidad | Peugeot 5008 · 2 unidades | 2 | unidades') >= 0, t.join(' // '));
+    // Solo lo que caduca pronto (incluye lo caducado; nunca el equipo)
+    await p.click('#s-caducan');
+    t = await tarjetas();
+    assert.deepStrictEqual(t.map(function (x) { return x.split(' | ')[0]; }), ['Macarrón']);
+    await p.click('#s-caducan');
+    // Agrupar por lugar y estante
+    await p.selectOption('#s-vista', 'estancia');
+    // Los estantes van en el orden de Ajustes (aquí solo están dados de alta el 5 y el 6) y después el resto por nombre
+    assert.match(await p.textContent('#s-lista'), /Trastero Ávila · Estante 5[\s\S]*Trastero Ávila · Estante 1[\s\S]*Trastero Ávila · Estante 3[\s\S]*Peugeot 5008/);
+    // Filtro que deja la lista vacía: lo explica
+    await p.selectOption('#s-vista', 'producto');
+    await p.selectOption('#s-lugar', 'Caja 72 h');
+    assert.match(await p.textContent('#s-lista'), /Con estos filtros no sale nada, pero hay cosas en otros lugares/);
+    // Al tocar una tarjeta se abre la ficha
+    await p.selectOption('#s-lugar', T);
+    await p.click('#s-lista .prod >> nth=0');
+    await p.waitForSelector('#ficha-sheet.on');
+    assert.deepStrictEqual(a.errores, []);
+  } finally { await a.cerrar(); }
+});

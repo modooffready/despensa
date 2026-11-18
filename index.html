@@ -160,6 +160,22 @@
   @keyframes inr { from { opacity:0; transform:translateX(28px); } to { opacity:1; transform:none; } }
   @keyframes inl { from { opacity:0; transform:translateX(-28px); } to { opacity:1; transform:none; } }
   .in-r { animation:inr .25s ease; } .in-l { animation:inl .25s ease; }
+  /* Stock: filtros en una tarjeta y productos con su color o foto */
+  .s-filtros { display:flex; flex-direction:column; gap:8px; padding:10px; }
+  .s-filtros input, .s-filtros select { margin:0; }
+  .s-fila2 { display:flex; gap:8px; align-items:center; }
+  .s-fila2 .chip { flex:1; margin:0; min-height:44px; }
+  .s-fila2 select { flex:1; }
+  .prod.s-prod { display:flex; gap:12px; align-items:flex-start; }
+  .s-ico { width:52px; height:52px; border-radius:10px; flex:none; display:flex; align-items:center; justify-content:center; font-size:24px; overflow:hidden; color:#fff; }
+  .s-ico img { width:100%; height:100%; object-fit:cover; background:#fff; }
+  .s-cuerpo { flex:1; min-width:0; }
+  .s-cuerpo .s-nombre { font-weight:600; font-size:16px; }
+  .s-cuerpo .s-marca { color:var(--gris); font-size:14px; }
+  .s-num { flex:none; text-align:center; line-height:1.1; }
+  .s-num b { display:block; font-size:24px; color:var(--verde); }
+  .s-num span { font-size:11px; color:var(--gris); }
+  .s-lote { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; margin-top:6px; font-size:14px; color:var(--gris); }
   .grupo { margin:18px 2px 8px; font-weight:700; color:var(--verde); font-size:16px; border-bottom:2px solid var(--verde); padding-bottom:4px; }
   .tag-cat { display:inline-block; font-size:12px; font-weight:700; padding:2px 8px; border-radius:10px; background:#e6efe8; color:var(--verde); margin-top:6px; }
   .tag-equipo { background:#e8e6f3; color:#4a3f8a; }
@@ -346,26 +362,29 @@
 
   <!-- STOCK -->
   <section id="pantalla-stock" class="oculto">
-    <div class="segmentado peq" style="margin-bottom:10px">
-      <button id="s-v-producto" class="activo">Producto</button>
-      <button id="s-v-categoria">Categoría</button>
-      <button id="s-v-estancia">Estancia</button>
-    </div>
-    <div class="tarjeta contexto" style="margin-bottom:8px">
-      <div id="s-grupos" class="c-grupos" aria-label="Estancia"></div>
-      <div class="segmentado peq" aria-label="Despensa o material">
-        <button id="s-m-DESPENSA">🥫 Despensa</button>
-        <button id="s-m-MATERIAL">🧰 Material</button>
-        <button id="s-m-TODO">Todo</button>
+    <!-- Una sola tarjeta de filtros: buscar, lugar y tipo, y cómo ordenar -->
+    <div class="tarjeta s-filtros">
+      <input id="s-buscar" type="search" aria-label="Buscar producto" placeholder="🔎 Buscar: choco, atún, pilas…">
+      <div class="fila">
+        <select id="s-lugar" aria-label="Lugar"></select>
+        <select id="s-tipo" aria-label="Despensa o material">
+          <option value="TODO">Todo</option>
+          <option value="DESPENSA">🥫 Despensa</option>
+          <option value="MATERIAL">🧰 Material</option>
+        </select>
+      </div>
+      <div class="s-fila2">
+        <button class="chip" id="s-caducan">⏰ Caduca pronto</button>
+        <select id="s-vista" aria-label="Agrupar por">
+          <option value="producto">Por producto</option>
+          <option value="categoria">Por categoría</option>
+          <option value="estancia">Por lugar y estante</option>
+        </select>
       </div>
     </div>
-    <div class="fila" style="margin-bottom:8px;gap:6px">
-      <button class="chip" id="s-caducan">⏰ Caducan pronto</button>
-    </div>
-    <button class="btn btn-sec" id="s-informe" style="margin:0 0 8px">🖨️ Informe para revisar / PDF</button>
-    <input id="s-buscar" type="search" placeholder="🔎 Escribe parte del nombre: choco, atún…">
     <div class="muted" id="s-resumen" style="margin:8px 2px"></div>
     <div id="s-lista"></div>
+    <button class="enlace" id="s-informe" style="display:block;margin:6px auto 0">🖨️ Informe para imprimir o guardar en PDF</button>
   </section>
 
   <!-- OBJETIVOS Y LISTA DE LA COMPRA -->
@@ -515,6 +534,6 @@
   <button id="t-objetivos"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="5"></circle><circle cx="12" cy="12" r="1"></circle></svg></span>Objetivos</button>
   <button id="t-compra"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h2l2.5 12h10L20 7H6.5"></path><circle cx="9" cy="20" r="1.5"></circle><circle cx="17" cy="20" r="1.5"></circle></svg></span>Compra</button>
 </nav>
-<script src="app.js?v=2.10.6"></script>
+<script src="app.js?v=2.10.7"></script>
 </body>
 </html>
