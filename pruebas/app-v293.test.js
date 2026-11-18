@@ -297,7 +297,7 @@ test('v2.10.0: barra de abajo con la sección activa y botón flotante de Escane
     await p.click('#t-compra');
     await p.waitForSelector('#o-compra:not(.oculto)');
     e = await estado();
-    assert.deepStrictEqual([e.pantalla, e.activa, e.titulo, e.fab], ['objetivos', 't-compra', '🛒 Lista de la compra', true]);
+    assert.deepStrictEqual([e.pantalla, e.activa, e.titulo, e.fab], ['objetivos', 't-compra', '🛒 Compra', true]);
     assert.match(await p.textContent('#o-texto'), /Atún \/ sardinas \/ caballa en lata: faltan 26 uds/);
     await foto('4-compra');
     // Desde Compra, abrir una ficha para editar: la barra y el botón flotante desaparecen; al cancelar se vuelve a Compra
@@ -329,7 +329,7 @@ test('v2.10.0: barra de abajo con la sección activa y botón flotante de Escane
     await p.waitForSelector('#o-compra:not(.oculto)');
     const copiar = await p.evaluate(function () {
       window.scrollTo(0, document.body.scrollHeight);
-      return document.getElementById('o-copiar').getBoundingClientRect().bottom <= document.getElementById('fab-escanear').getBoundingClientRect().top;
+      return document.getElementById('o-keep').getBoundingClientRect().bottom <= document.getElementById('fab-escanear').getBoundingClientRect().top;
     });
     assert.ok(copiar, 'el botón Copiar no queda bajo el botón flotante');
     assert.deepStrictEqual(a.errores, []);
@@ -472,13 +472,19 @@ test('v2.10.3: Compra propone primero qué pasar del trastero a la Caja 72 h y d
     assert.strictEqual(await p.locator('#o-reparto .o-hecho').count(), 0);
     assert.match(await p.textContent('#o-texto'), /Atún \/ sardinas \/ caballa en lata: faltan 17 uds \(hay 13 de 30\)/);
     // En la Caja 72 h: primero lo que se puede traer
-    await p.click('#o-almacenes .chip[data-a="Caja 72 h"]');
+    assert.ok(!(await p.isVisible('#o-almacenes')) && !(await p.isVisible('#o-resumen')), 'Compra no repite los botones ni el resumen de Objetivos');
+    await p.selectOption('#o-lugar', 'Caja 72 h');
     await p.waitForSelector('#o-reparto .o-hecho');
     const sug = await p.evaluate(function () { return objVista.reparto.map(function (x) { return x.cantidad + ' ' + x.codigo + ' ' + x.lote.caducidad + ' ' + x.linea.o.id; }); });
     assert.deepStrictEqual(sug, ['3 L ' + lejos + ' CJ-05', '4 B ' + lejos + ' CJ-03', '5 S ' + lejos + ' CJ-03'],
       'lo que caduca más tarde primero; nada que caduque en menos de 6 meses; ni Varios ni productos sin subcategoría');
-    assert.match(await p.textContent('#o-reparto'), /1 · Pasa de Trastero Ávila a Caja 72 h/);
-    assert.strictEqual(await p.textContent('#o-compra-titulo'), '2 · Compra para Caja 72 h');
+    assert.match(await p.textContent('#o-reparto'), /Ya lo tienes en Trastero Ávila\s*Pásalo a Caja 72 h y pulsa «Hecho»/);
+    assert.match(await p.textContent('#o-reparto'), new RegExp('3 × Leche entera\\s*Estante 6 · caduca may ' + lejos.split('-')[0]));
+    const comprar = await p.textContent('#o-comprar');
+    assert.match(comprar, /Hay que comprar\s*3 cosas/);
+    assert.match(comprar, /Leche UHT entera\s*1 litros/);
+    assert.match(comprar, /Legumbre cocida\s*6 uds/);
+    assert.ok(!(await p.isVisible('#o-texto')), 'el texto para compartir no se ve');
     const lista = await p.textContent('#o-texto');
     assert.doesNotMatch(lista, /Atún/, 'el atún se cubre entero con lo que hay en el trastero');
     assert.match(lista, /Leche UHT entera: faltan 1 litros \(hay 0 de 4 y puedes traer 3\)/);
@@ -542,6 +548,55 @@ test('v2.10.4: Compra no se rompe con datos raros de la hoja (nombre numérico, 
     assert.ok(f.visible);
     assert.match(f.aviso, /No se pudo calcular qué pasar desde el trastero.*dato raro/);
     assert.match(f.texto, /Atún \/ sardinas en lata: faltan 9 uds/, 'sin reparto, la lista no descuenta nada');
+    assert.deepStrictEqual(a.errores, []);
+  } finally { await a.cerrar(); }
+});
+
+test('v2.10.5: Compra con «Todos los lugares» reparte por prioridad sin ofrecer dos veces el mismo lote', async function () {
+  const fila = function (id, cat, desc, cant, uni, alm) { return { id: id, categoria: cat, descripcion: desc, cantidad_objetivo: cant, unidad: uni, almacen: alm, notas: '' }; };
+  const PE = 'Peugeot 5008';
+  const inicial = {};
+  inicial['A|' + lejos + '|' + T + '|Estante 5'] = 3;   // agua en brik: 3 en el trastero
+  const srv = servidorConStock(inicial, {
+    config: CONFIG_MOVER.concat([{ tipo: 'ESTANCIA', valor: PE, padre: '', activo: true }]),
+    objetivos: [fila('TA-60', 'BEBIDA', 'Agua en brik', 4, 'uds', T), fila('PE-01', 'BEBIDA', 'Agua en brik', 10, 'uds', PE),
+      fila('CJ-07', 'BEBIDA', 'Agua en brik', 2, 'uds', CAJA)],
+    productos: [{ codigo: 'A', nombre: 'Agua brik 0,5 L', categoria: 'BEBIDA', linea_objetivo: 'TA-60' }] });
+  const a = await montar({ off: function (c, rt) { return json(rt, { status: 0 }, 404); }, servidor: srv.responder });
+  try {
+    const p = a.p;
+    await p.evaluate(function () { return guardarAjustes(); });
+    await p.waitForFunction(function () { return !sincronizando && stockServidor.length === 1 && objetivos.length === 3; });
+    await p.click('#t-compra');
+    await p.waitForSelector('#o-compra:not(.oculto)');
+    // Las opciones: todos los lugares y cada lugar por separado
+    assert.deepStrictEqual(await p.$$eval('#o-lugar option', function (o) { return o.map(function (x) { return x.textContent; }); }),
+      ['Todos los lugares', T, PE, CAJA]);
+    await p.selectOption('#o-lugar', '__todos__');
+    await p.waitForSelector('#o-reparto .o-hecho');
+    const e = await p.evaluate(function () {
+      return { mover: objVista.reparto.map(function (x) { return x.cantidad + ' → ' + x.destino; }), reparto: document.getElementById('o-reparto').textContent,
+        comprar: document.getElementById('o-comprar').textContent, texto: document.getElementById('o-texto').textContent, keep: objVista.textoMarcar };
+    });
+    assert.deepStrictEqual(e.mover, ['2 → Caja 72 h', '1 → Peugeot 5008'], 'primero la Caja y lo que queda al coche; los 3 briks no se ofrecen dos veces');
+    assert.match(e.reparto, /→ Caja 72 h[\s\S]*→ Peugeot 5008/);
+    assert.match(e.comprar, /Peugeot 5008\s*Bebida\s*Agua en brik\s*9 uds/);
+    assert.match(e.comprar, /Trastero Ávila\s*Bebida\s*Agua en brik\s*4 uds/, 'el trastero se queda sin los 3 que salen y los vuelve a necesitar');
+    assert.doesNotMatch(e.comprar, /Caja 72 h/, 'la Caja queda cubierta con lo que se mueve');
+    assert.match(e.texto, /Todos los lugares[\s\S]*📍 \*Peugeot 5008\*[\s\S]*📍 \*Trastero Ávila\*/);
+    assert.match(e.keep, /^Agua en brik — 9 uds \(Peugeot 5008\)$/m);
+    if (process.env.CAPTURAS) await p.screenshot({ path: '/tmp/compra-todos.png' });
+    // «Hecho» en la sugerencia del coche registra el traspaso al coche aunque se esté viendo «Todos»
+    await p.click('#o-reparto .o-hecho >> nth=1');
+    await p.waitForFunction(function () { return !sincronizando && stockServidor.some(function (l) { return l.almacen === 'Peugeot 5008'; }); }, null, { timeout: 15000 });
+    assert.strictEqual(srv.stock['A|' + lejos + '|' + PE + '|'], 1);
+    assert.strictEqual(await p.inputValue('#o-lugar'), '__todos__', 'sigue en «Todos los lugares»');
+    // Y se puede volver a mirar un solo lugar
+    await p.selectOption('#o-lugar', PE);
+    await p.waitForFunction(function () { return objVista.almacen === 'Peugeot 5008' && !objVista.compraTodos; });
+    // Mirando solo el coche, los 2 briks que quedan en el trastero se le ofrecen a él (ya no se reservan para la Caja)
+    assert.deepStrictEqual(await p.evaluate(function () { return objVista.reparto.map(function (x) { return x.cantidad + ' → ' + x.destino; }); }), ['2 → Peugeot 5008']);
+    assert.match(await p.textContent('#o-comprar'), /Agua en brik\s*7 uds/);
     assert.deepStrictEqual(a.errores, []);
   } finally { await a.cerrar(); }
 });

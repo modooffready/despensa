@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.10.4';
+const VERSION = '2.10.5';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -295,7 +295,11 @@ function enlazarEventos() {
   $('fab-escanear').onclick = abrirEscaner;
   $('o-compartir').onclick = function () { compartirLista(false); };
   $('o-keep').onclick = function () { compartirLista(true); };
-  $('o-copiar').onclick = copiarLista;
+  $('o-lugar').onchange = function () {
+    objVista.compraTodos = $('o-lugar').value === TODOS;
+    if (!objVista.compraTodos) objVista.almacen = $('o-lugar').value;
+    pintarObjetivos();
+  };
   $('i-volver').onclick = abrirStock;
   $('i-imprimir').onclick = function () {
     try { window.print(); } catch (e) { toast('Este navegador no deja imprimir desde la app. Ábrela en Chrome y usa ⋮ → Compartir → Imprimir.', 5000); }
@@ -392,6 +396,8 @@ async function refrescarEstado() {
   $('punto-red').className = 'punto ' + (online ? 'on' : 'off');
   $('txt-red').textContent = sincronizando ? 'Sincronizando…' : (online ? 'Con conexión' : 'Sin conexión');
   const pend = await idb.todos('pendientes');
+  // Se guarda también en memoria: tras sincronizar, lo enviado ya está en el stock del servidor y no debe sumarse otra vez
+  pendientesCache = pend;
   const nFichas = Object.keys(prodPend).length, nFotos = Object.keys(fotosPend).length;
   $('txt-pendientes').textContent = pend.length + (nFichas ? ' (+' + nFichas + ' fichas)' : '') + (nFotos ? ' (+' + nFotos + ' fotos)' : '');
   $('txt-sync').textContent = ajustes.ultimaSync
@@ -1387,7 +1393,7 @@ async function crearTraspaso(codigo, l, cantidad, destino, estante) {
 async function hacerReparto(i) {
   const x = (objVista.reparto || [])[i];
   if (!x) return;
-  const destino = objVista.almacen;
+  const destino = x.destino || objVista.almacen;
   await crearTraspaso(x.codigo, x.lote, x.cantidad, destino, ubicacionesDe(destino)[0] || '');
   toast('Movido: ' + x.cantidad + ' × ' + nombreDe(x.codigo) + ' → ' + destino);
   pendientesCache = await idb.todos('pendientes');
@@ -1782,7 +1788,8 @@ function pintarInforme() {
  * tiene una línea en esa estancia, los productos de la categoría sin línea asignada.
  * Solo cuenta el stock de la estancia del objetivo. Lo caducado no cuenta; lo que caduca
  * en 3 meses sí cuenta, con aviso. */
-const objVista = { almacen: '', modo: 'categorias', abiertas: {}, verSinLinea: false };
+const objVista = { almacen: '', modo: 'categorias', abiertas: {}, verSinLinea: false, compraTodos: false };
+const TODOS = '__todos__'; // opción «Todos los lugares» del selector de Compra
 const UNIDADES_PESO = { kg: 1, g: 0.001 }, UNIDADES_VOLUMEN = { litros: 1, l: 1, ml: 0.001 };
 
 function numero(v) { const n = Number(String(v == null ? '' : v).replace(',', '.').trim()); return isFinite(n) ? n : NaN; }
@@ -1940,6 +1947,11 @@ function calcularObjetivos(porCodigo, almacen) {
 
 // «rep» (opcional) es el resultado de sugerirReparto: la lista descuenta lo que se puede traer de otro lugar
 function textoListaCompra(r, almacen, rep) {
+  const partes = cuerpoListaCompra(r, rep);
+  if (!partes.length) return '';
+  return '🛒 Lista de la compra · ' + almacen + '\n' + new Date().toLocaleDateString('es-ES') + '\n\n' + partes.join('\n');
+}
+function cuerpoListaCompra(r, rep) {
   const partes = [];
   const falta = function (l) { return rep ? rep.faltaTras[l.o.id] : l.falta; };
   r.categorias.forEach(function (c) {
@@ -1952,20 +1964,80 @@ function textoListaCompra(r, almacen, rep) {
         ' (hay ' + formatoCant(l.tiene) + ' de ' + formatoCant(l.objetivo) + (traido > 0 ? ' y puedes traer ' + formatoCant(traido) : '') + ')');
     });
   });
-  if (!partes.length) return '';
-  return '🛒 Lista de la compra · ' + almacen + '\n' + new Date().toLocaleDateString('es-ES') + '\n\n' + partes.join('\n');
+  return partes;
 }
 
 // Una línea por artículo, sin cabeceras: en Keep cada línea pasa a ser una casilla para marcar
-function textoListaMarcar(r, rep) {
+function textoListaMarcar(r, rep, lugar) {
   const filas = [];
   r.categorias.forEach(function (c) {
     c.lineas.forEach(function (l) {
       const f = rep ? rep.faltaTras[l.o.id] : l.falta;
-      if (l.objetivo > 0 && f > 1e-9) filas.push(l.o.descripcion + ' — ' + formatoCant(f) + ' ' + l.o.unidad);
+      if (l.objetivo > 0 && f > 1e-9) filas.push(l.o.descripcion + ' — ' + formatoCant(f) + ' ' + l.o.unidad + (lugar ? ' (' + lugar + ')' : ''));
     });
   });
   return filas.join('\n');
+}
+
+// Orden de prioridad para repartir y comprar en «Todos los lugares» (decidido con Sergio):
+// Caja 72 h → coches y demás lugares → el lugar principal (trastero) → Sotalbo
+function prioridadLugar(e) {
+  const n = normalizar(e);
+  if (/^caja\b/.test(n)) return 0;
+  if (mismoSitio(e, lugarPrincipal())) return 2;
+  if (/sotalbo/.test(n)) return 3;
+  return 1;
+}
+
+function mesAnio(cad) {
+  if (!cad) return 'sin caducidad';
+  const p = String(cad).split('-');
+  const m = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][Number(p[1]) - 1];
+  return m ? 'caduca ' + m + ' ' + p[0] : textoCaducidad(cad);
+}
+
+// Qué mover y qué comprar para uno o varios lugares. Con varios, se reparte en orden de prioridad y lo que se
+// propone llevar a un lugar ya no se ofrece a los siguientes; el lugar principal descuenta lo que sale de él.
+function planCompra(lugares) {
+  const porCodigo = lotesTodos(pendientesCache);
+  // Copia de los lotes: se van descontando a medida que se proponen traspasos
+  const pc = {};
+  Object.keys(porCodigo).forEach(function (c) { pc[c] = porCodigo[c].map(function (l) { return Object.assign({}, l); }); });
+  const plan = { mover: [], lugares: [], fallo: '' };
+  lugares.slice().sort(function (a, b) { return prioridadLugar(a) - prioridadLugar(b); }).forEach(function (L) {
+    let rep = null;
+    if (!mismoSitio(L, lugarPrincipal())) {
+      try { rep = sugerirReparto(pc, L); }
+      catch (err) { plan.fallo = plan.fallo || String(err && err.message || err); console.error('Reparto', L, err); }
+    }
+    if (rep) {
+      rep.sugerencias.forEach(function (x) {
+        plan.mover.push(Object.assign({}, x, { destino: L, origen: rep.origen, lote: Object.assign({}, x.lote) }));
+        x.lote.stock -= x.cantidad;
+      });
+    }
+    const r = rep ? rep.r : calcularObjetivos(pc, L);
+    plan.lugares.push({ lugar: L, r: r, rep: rep || undefined });
+  });
+  return plan;
+}
+
+function htmlListaCompra(plan, varios) {
+  let total = 0, h = '';
+  plan.lugares.forEach(function (x) {
+    let cuerpo = '';
+    x.r.categorias.forEach(function (c) {
+      const faltan = c.lineas.filter(function (l) { return l.objetivo > 0 && (x.rep ? x.rep.faltaTras[l.o.id] : l.falta) > 1e-9; });
+      if (!faltan.length) return;
+      cuerpo += '<div class="c-cat">' + esc(bonito(c.categoria)) + '</div>' + faltan.map(function (l) {
+        total++;
+        const f = x.rep ? x.rep.faltaTras[l.o.id] : l.falta;
+        return '<div class="c-fila"><span>' + esc(l.o.descripcion) + '</span><b>' + formatoCant(f) + ' ' + esc(l.o.unidad) + '</b></div>';
+      }).join('');
+    });
+    if (cuerpo) h += (varios ? '<div class="c-lugar">' + esc(x.lugar) + '</div>' : '') + cuerpo;
+  });
+  return { html: h, total: total };
 }
 
 // Errores de la pestaña Objetivos de la hoja que hacen que algo no cuente sin avisar
@@ -2011,7 +2083,20 @@ function pintarObjetivos() {
     return '<button class="chip' + (a === objVista.almacen ? ' activo' : '') + '" data-a="' + esc(a) + '">' + esc(a) + '</button>';
   }).join('') : '';
   cada($('o-almacenes').children, function (b) { b.onclick = function () { objVista.almacen = b.dataset.a; pintarObjetivos(); }; });
-  $('o-titulo').textContent = objVista.modo === 'compra' ? '🛒 Lista de la compra' : '🎯 Objetivos';
+  const enCompra = objVista.modo === 'compra';
+  $('o-titulo').textContent = enCompra ? '🛒 Compra' : '🎯 Objetivos';
+  // En Compra el lugar se elige en una lista (nombres enteros, y la opción «Todos los lugares»); en Objetivos, con botones
+  $('o-almacenes').classList.toggle('oculto', enCompra);
+  $('o-lugar-caja').classList.toggle('oculto', !enCompra || !alms.length);
+  $('o-resumen').classList.toggle('oculto', enCompra);
+  $('o-avisos').classList.toggle('oculto', enCompra);
+  if (enCompra) {
+    opciones($('o-lugar'), alms);
+    const todos = document.createElement('option');
+    todos.value = TODOS; todos.textContent = 'Todos los lugares';
+    $('o-lugar').insertBefore(todos, $('o-lugar').firstChild);
+    $('o-lugar').value = objVista.compraTodos ? TODOS : objVista.almacen;
+  }
   pintarNav();
 
   if (!objetivos.length) {
@@ -2054,32 +2139,49 @@ function pintarObjetivos() {
     $('o-lista').innerHTML = '';
     $('o-compra').classList.remove('oculto');
     // Primero lo que ya se tiene en el lugar principal y solo hay que mover; después, lo que hay que comprar.
-    // Si el cálculo falla con algún dato raro de la hoja, se avisa y se muestra la lista de la compra sin descontar nada.
-    let rep = null, fallo = '';
-    try { rep = sugerirReparto(lotesTodos(pendientesCache), objVista.almacen); }
-    catch (err) { fallo = String(err && err.message || err); console.error('Reparto', err); }
-    objVista.reparto = rep ? rep.sugerencias : [];
-    const hayReparto = objVista.reparto.length > 0;
-    $('o-reparto').innerHTML = fallo
-      ? '<div class="tarjeta" style="border-left:5px solid var(--rojo)"><b>⚠️ No se pudo calcular qué pasar desde el trastero.</b>' +
-        '<div class="muted" style="margin-top:4px">La lista de abajo no lo descuenta. Haz una captura de este aviso y mándasela a Claude: «' + esc(fallo) + '»</div></div>'
-      : !hayReparto ? '' :
-      '<div class="tarjeta" id="o-reparto-caja"><h2 style="font-size:18px;margin:0 0 4px">1 · Pasa de ' + esc(rep.origen) + ' a ' + esc(objVista.almacen) + '</h2>' +
-      '<p class="muted" style="margin:0 0 6px">Ya lo tienes: solo hay que moverlo. Pulsa «Hecho» cuando lo hayas pasado.</p>' +
-      rep.sugerencias.map(function (x, i) {
-        return '<div class="lista-item"><span><b>' + x.cantidad + ' ×</b> ' + esc(nombreDe(x.codigo)) +
-          '<br><span class="muted" style="font-size:13px">' + esc((x.lote.estante ? x.lote.estante + ' · ' : '') + textoCaducidad(x.lote.caducidad)) +
-          ' · para ' + esc(x.linea.o.descripcion) + '</span></span><button class="o-hecho" data-i="' + i + '">Hecho</button></div>';
-      }).join('') + '</div>';
+    // Si el cálculo falla con algún dato raro de la hoja, se avisa y se muestra la lista sin descontar nada.
+    const varios = objVista.compraTodos;
+    const lugares = varios ? alms : [objVista.almacen];
+    const plan = planCompra(lugares);
+    objVista.reparto = plan.mover;
+    const origen = lugarPrincipal();
+    let hr = '';
+    if (plan.fallo) {
+      hr = '<div class="tarjeta" style="border-left:5px solid var(--rojo)"><b>⚠️ No se pudo calcular qué pasar desde el trastero.</b>' +
+        '<div class="muted" style="margin-top:4px">La lista de abajo no lo descuenta. Haz una captura de este aviso y mándasela a Claude: «' + esc(plan.fallo) + '»</div></div>';
+    }
+    if (plan.mover.length) {
+      let ultimo = '';
+      hr += '<div class="tarjeta" id="o-reparto-caja"><div class="c-cab"><h2>Ya lo tienes en ' + esc(origen) + '</h2></div>' +
+        '<p class="muted" style="margin:0 0 4px">' + (varios ? 'Pásalo a cada lugar' : 'Pásalo a ' + esc(objVista.almacen)) + ' y pulsa «Hecho».</p>' +
+        plan.mover.map(function (x, i) {
+          const cab = varios && x.destino !== ultimo ? '<div class="c-lugar">→ ' + esc(x.destino) + '</div>' : '';
+          ultimo = x.destino;
+          return cab + '<div class="lista-item"><span><b>' + x.cantidad + ' ×</b> ' + esc(nombreDe(x.codigo)) +
+            '<br><span class="muted" style="font-size:13px">' + esc((x.lote.estante ? x.lote.estante + ' · ' : '') + mesAnio(x.lote.caducidad)) +
+            '</span></span><button class="o-hecho" data-i="' + i + '">Hecho</button></div>';
+        }).join('') + '</div>';
+    }
+    $('o-reparto').innerHTML = hr;
     cada($('o-reparto').querySelectorAll('.o-hecho'), function (b) {
       b.onclick = function () { b.disabled = true; hacerReparto(Number(b.dataset.i)); };
     });
-    $('o-compra-titulo').textContent = hayReparto ? '2 · Compra para ' + objVista.almacen : '';
-    $('o-compra-titulo').classList.toggle('oculto', !hayReparto);
-    const t = textoListaCompra(r, objVista.almacen, rep || undefined);
-    $('o-texto').textContent = t || (hayReparto ? '✅ Con lo que puedes traer no hace falta comprar nada.' : '✅ No falta nada: todos los objetivos están completos.');
-    objVista.textoMarcar = textoListaMarcar(r, rep || undefined);
-    $('o-compartir').disabled = !t; $('o-copiar').disabled = !t; $('o-keep').disabled = !t;
+    const lista = htmlListaCompra(plan, varios);
+    $('o-comprar').innerHTML = '<div class="c-cab"><h2>Hay que comprar</h2>' +
+      (lista.total ? '<span class="muted">' + lista.total + (lista.total === 1 ? ' cosa' : ' cosas') + '</span>' : '') + '</div>' +
+      (lista.html || '<p class="muted" style="margin:6px 0 0">' + (plan.mover.length ? '✅ Con lo que tienes en ' + esc(origen) + ' no hace falta comprar nada.' : '✅ No falta nada: todos los objetivos están completos.') + '</p>');
+    // Texto para compartir y para Keep
+    let t = '';
+    if (varios) {
+      const bloques = plan.lugares.map(function (x) { const c = cuerpoListaCompra(x.r, x.rep); return c.length ? '📍 *' + x.lugar + '*\n' + c.join('\n') : ''; }).filter(Boolean);
+      t = bloques.length ? '🛒 Lista de la compra · Todos los lugares\n' + new Date().toLocaleDateString('es-ES') + '\n\n' + bloques.join('\n\n') : '';
+      objVista.textoMarcar = plan.lugares.map(function (x) { return textoListaMarcar(x.r, x.rep, x.lugar); }).filter(Boolean).join('\n');
+    } else {
+      t = textoListaCompra(plan.lugares[0].r, objVista.almacen, plan.lugares[0].rep);
+      objVista.textoMarcar = textoListaMarcar(plan.lugares[0].r, plan.lugares[0].rep);
+    }
+    $('o-texto').textContent = t;
+    $('o-compartir').disabled = !t; $('o-keep').disabled = !t;
   } else {
     $('o-compra').classList.add('oculto');
     $('o-lista').innerHTML = r.categorias.map(function (c) {
@@ -2128,7 +2230,7 @@ function pintarObjetivos() {
 
 async function compartirLista(paraMarcar) {
   const t = paraMarcar ? objVista.textoMarcar : $('o-texto').textContent;
-  const titulo = 'Compra ' + objVista.almacen + ' ' + new Date().toLocaleDateString('es-ES');
+  const titulo = 'Compra ' + (objVista.compraTodos ? 'todos los lugares' : objVista.almacen) + ' ' + new Date().toLocaleDateString('es-ES');
   if (navigator.share) {
     try { await navigator.share({ title: titulo, text: t }); if (paraMarcar) toast('En Keep: pulsa ⊞ abajo a la izquierda → Casillas de verificación', 6000); return; }
     catch (e) { if (e && e.name === 'AbortError') return; }
@@ -2136,7 +2238,6 @@ async function compartirLista(paraMarcar) {
   if (paraMarcar) { copiarTexto(t); return; }
   window.open('https://wa.me/?text=' + encodeURIComponent(t), '_blank');
 }
-async function copiarLista() { copiarTexto($('o-texto').textContent); }
 async function copiarTexto(t) {
   try { await navigator.clipboard.writeText(t); toast('Lista copiada'); }
   catch (e) { toast('No se pudo copiar: mantén pulsado el texto y cópialo a mano', 4000); }

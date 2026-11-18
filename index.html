@@ -154,6 +154,16 @@
   .lista-item { display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #eee; }
   .lista-item.inactivo span { color:#aaa; text-decoration:line-through; }
   .lista-item button { border:0; background:#e6e1d6; border-radius:8px; padding:6px 10px; font-size:14px; }
+  /* Compra: botón Hecho de las sugerencias de reparto y filas de la lista */
+  .lista-item button.o-hecho { background:var(--verde); color:#fff; font-weight:700; min-height:44px; padding:0 16px; border-radius:10px; flex:none; margin-left:10px; }
+  .c-cab { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:4px; }
+  .c-cab h2 { margin:0; font-size:18px; }
+  .c-lugar { font-weight:700; font-size:16px; margin:14px 0 2px; padding-top:10px; border-top:1px solid #e6e1d6; }
+  .c-lugar:first-of-type { border-top:0; padding-top:0; margin-top:8px; }
+  .c-cat { font-size:12px; font-weight:700; letter-spacing:.04em; color:var(--gris, #5b635d); text-transform:uppercase; margin:10px 0 2px; }
+  .c-fila { display:flex; justify-content:space-between; gap:10px; padding:5px 0; font-size:16px; }
+  .c-fila b { flex:none; }
+  #o-lugar-caja select { font-size:17px; font-weight:600; }
   .segmentado.peq button { padding:10px 4px; font-size:15px; }
   .barra { height:8px; background:#ece6d9; border-radius:9px; overflow:hidden; margin-top:6px; }
   .barra i { display:block; height:100%; border-radius:9px; }
@@ -348,17 +358,23 @@
     <div class="tarjeta">
       <h2 id="o-titulo">🎯 Objetivos</h2>
       <div class="chips" id="o-almacenes" style="margin:6px 0"></div>
+      <div id="o-lugar-caja" class="oculto">
+        <label for="o-lugar">¿Para qué lugar?</label>
+        <select id="o-lugar"></select>
+      </div>
       <div class="muted" id="o-resumen"></div>
     </div>
     <div id="o-avisos" style="margin-bottom:8px"></div>
     <div id="o-lista"></div>
     <div id="o-compra" class="oculto">
       <div id="o-reparto"></div>
-      <h2 id="o-compra-titulo" class="oculto" style="font-size:18px;margin:14px 4px 6px"></h2>
-      <div class="tarjeta"><pre id="o-texto"></pre></div>
-      <button class="btn btn-principal" id="o-compartir">📤 Compartir resumen (WhatsApp…)</button>
-      <button class="btn btn-sec" id="o-keep">📝 Lista para marcar (Keep)</button>
-      <button class="btn btn-sec" id="o-copiar">📋 Copiar</button>
+      <div class="tarjeta" id="o-comprar"></div>
+      <!-- Texto que se comparte (WhatsApp, Keep…): no se ve, la lista visible es la de arriba -->
+      <pre id="o-texto" class="oculto"></pre>
+      <div class="fila">
+        <button class="btn btn-principal" id="o-compartir">📤 Compartir</button>
+        <button class="btn btn-sec" id="o-keep">📝 Lista para Keep</button>
+      </div>
     </div>
   </section>
 
@@ -484,6 +500,6 @@
   <button id="t-objetivos"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="5"></circle><circle cx="12" cy="12" r="1"></circle></svg></span>Objetivos</button>
   <button id="t-compra"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h2l2.5 12h10L20 7H6.5"></path><circle cx="9" cy="20" r="1.5"></circle><circle cx="17" cy="20" r="1.5"></circle></svg></span>Compra</button>
 </nav>
-<script src="app.js?v=2.10.4"></script>
+<script src="app.js?v=2.10.5"></script>
 </body>
 </html>
