@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.10.5';
+const VERSION = '2.10.6';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -275,6 +275,8 @@ function enlazarEventos() {
   ['DESPENSA', 'MATERIAL'].forEach(function (m) {
     $('c-' + m).onclick = async function () { ajustes.modo = m; await guardarAjustesLocales(); pintarContexto(); };
   });
+  $('c-lugar').onchange = async function () { ajustes.grupo = $('c-lugar').value; await guardarAjustesLocales(); pintarContexto(); };
+  $('i-objetivos').onclick = function () { objVista.modo = 'categorias'; objVista.almacen = $('i-objetivos').dataset.lugar; abrirObjetivos(); };
   ['DESPENSA', 'MATERIAL', 'TODO'].forEach(function (m) {
     $('s-m-' + m).onclick = function () { stockModo = m; pintarStock(); };
   });
@@ -380,14 +382,46 @@ function nombreCorto(g) {
   return w[0];
 }
 function pintarContexto() {
-  const g = grupoActual();
-  $('c-grupos').innerHTML = grupos().map(function (x) {
-    return '<button class="' + (x === g ? 'activo' : '') + '" data-g="' + esc(x) + '" title="' + esc(x) + '">' + esc(nombreCorto(x)) + '</button>';
-  }).join('');
-  cada($('c-grupos').children, function (b) {
-    b.onclick = async function () { ajustes.grupo = b.dataset.g; await guardarAjustesLocales(); pintarContexto(); };
-  });
+  // Dónde estás: una lista con los nombres enteros (antes, botones cortados «Trast…», «Moc…»)
+  opciones($('c-lugar'), grupos());
+  $('c-lugar').value = grupoActual();
   ['DESPENSA', 'MATERIAL'].forEach(function (m) { $('c-' + m).classList.toggle('activo', m === modoActual()); });
+  pintarResumenInicio();
+}
+
+// Resumen de objetivos del lugar en el que estás; al tocarlo se abre Objetivos en ese lugar
+function pintarResumenInicio() {
+  const g = grupoActual();
+  const lugar = almacenesObjetivos().find(function (a) { return normalizar(grupoDe(a)) === normalizar(g); });
+  const caja = $('i-objetivos');
+  if (!lugar) { caja.classList.add('oculto'); return; }
+  const r = calcularObjetivos(lotesTodos(pendientesCache), lugar);
+  const conObj = r.lineas.filter(function (l) { return l.objetivo > 0; });
+  if (!conObj.length) { caja.classList.add('oculto'); return; }
+  const completas = conObj.filter(function (l) { return l.completa; }).length;
+  const avance = conObj.reduce(function (s, l) { return s + l.avance; }, 0) / conObj.length;
+  caja.dataset.lugar = lugar;
+  caja.innerHTML = '<span class="i-cab"><b>Objetivos de ' + esc(lugar) + '</b><span class="muted">' + completas + ' de ' + conObj.length + '</span></span>' +
+    barra(avance) + '<span class="i-ver">' + (completas === conObj.length ? 'Todo completo ✓' : 'Ver qué falta ›') + '</span>';
+  caja.classList.remove('oculto');
+}
+
+// Cuándo, en palabras: «hoy 21:18», «ayer 09:05» o «16/11 21:18»
+function cuando(fecha) {
+  const d = new Date(fecha), hoy = new Date();
+  const hora = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  const dias = Math.round((new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
+  if (dias === 0) return 'hoy ' + hora;
+  if (dias === 1) return 'ayer ' + hora;
+  return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) + ' ' + hora;
+}
+
+// Qué pasó, en una frase: «Guardaste 2», «Sacaste 1», «Moviste 3 a Caja 72 h»
+function fraseMovimiento(m) {
+  const n = m.cantidad;
+  if (m.traspaso && m.tipo === 'SALIDA') return 'Moviste ' + n + ' a ' + String(m.nota || '').replace(/^Traspaso a /, '').split(' · ')[0];
+  if (m.esDeshacer) return 'Corregido: ' + (m.tipo === 'ENTRADA' ? 'vuelven ' : 'se quitan ') + n;
+  return (m.tipo === 'ENTRADA' ? 'Guardaste ' : m.tipo === 'SALIDA' ? 'Sacaste ' : 'Ajuste de ') + n;
 }
 
 /* ---------- Estado e historial ---------- */
@@ -411,19 +445,22 @@ async function refrescarEstado() {
   pas.textContent = sincronizando ? '🔄 Sincronizando' : ultimoError ? '⚠️ Error' : !online ? (total ? '📴 ' + total + ' pendientes' : '📴 Sin conexión') : total ? '⏳ ' + total + ' pendientes' : '✓ Al día';
   $('tarjeta-sync').classList.toggle('oculto', !ultimoError);
   // Aviso de caducidades (solo lo que se consume, en todas las estancias)
+  // Se cuentan productos, no lotes: un mismo producto con dos fechas cuenta una vez
   let cad = 0, pronto = 0;
   const todos = lotesTodos(pend);
   Object.keys(todos).forEach(function (c) {
     if ((catalogo[c] || {}).tipo === 'EQUIPO') return;
-    todos[c].forEach(function (l) { const e = estadoCaducidad(l.caducidad); if (e === 'caducado') cad++; else if (e === 'pronto') pronto++; });
+    const est = todos[c].map(function (l) { return estadoCaducidad(l.caducidad); });
+    if (est.indexOf('caducado') >= 0) cad++; else if (est.indexOf('pronto') >= 0) pronto++;
   });
   $('btn-caducidades').classList.toggle('oculto', !(cad + pronto));
-  $('btn-caducidades').textContent = '⏰ ' + [cad ? cad + (cad === 1 ? ' lote caducado' : ' lotes caducados') : '', pronto ? pronto + ' caduca' + (pronto === 1 ? '' : 'n') + ' en 3 meses' : ''].filter(String).join(' · ') + ' · Ver';
+  pintarResumenInicio();
+  $('btn-caducidades').innerHTML = '<span>⏰ ' + esc([cad ? cad + (cad === 1 ? ' producto caducado' : ' productos caducados') : '', pronto ? pronto + (pronto === 1 ? ' producto caduca' : ' productos caducan') + ' en 3 meses' : ''].filter(String).join(' · ')) + '</span><b>Ver</b>';
   $('btn-revision').classList.toggle('oculto', !revision.length);
-  $('btn-revision').textContent = '⚠️ ' + revision.length + (revision.length === 1 ? ' movimiento no se pudo guardar' : ' movimientos no se pudieron guardar') + ' · Ver';
+  $('btn-revision').innerHTML = '<span>⚠️ ' + revision.length + (revision.length === 1 ? ' movimiento no se pudo guardar' : ' movimientos no se pudieron guardar') + '</span><b>Ver</b>';
   const n = incompletos().length;
   $('btn-incompletos').classList.toggle('oculto', !n);
-  $('btn-incompletos').textContent = '⚠️ Faltan datos en ' + n + (n === 1 ? ' producto' : ' productos') + ' · Completar';
+  $('btn-incompletos').innerHTML = '<span>Faltan datos en ' + n + (n === 1 ? ' producto' : ' productos') + '</span><b>Completar</b>';
 }
 
 // Productos a los que les falta el nombre o la categoría (p. ej. no estaban en Open Food Facts)
@@ -449,15 +486,19 @@ async function pintarHistorial() {
   if (!h.length) { lista.innerHTML = '<li class="muted">Todavía no hay movimientos</li>'; return; }
   // Se puede deshacer cualquier movimiento de la lista (no solo el último), salvo los ya deshechos o las correcciones
   const sePuedeDeshacer = function (m) { return !m.deshecho && !m.esDeshacer && (m.estado === 'ok' || m.estado === 'pendiente'); };
-  lista.innerHTML = h.slice(0, 25).map(function (m) {
-    const icono = m.deshecho ? '↩️' : m.estado === 'ok' ? '✅' : (m.estado === 'pendiente' ? '⏳' : '⚠️');
-    return '<li><div><span class="tag ' + esc(m.tipo) + '">' + esc(m.tipo) + '</span> ' +
-      esc(m.cantidad) + ' × ' + esc((catalogo[m.codigo] && catalogo[m.codigo].nombre) || m.nombre || m.codigo) +
-      '<div class="meta">' + esc(m.caducidad || 'sin cad.') + ' · ' + esc(m.almacen) + (m.estante ? ' · ' + esc(m.estante) : '') +
-      ' · ' + new Date(m.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) +
+  // De un traspaso solo se enseña la salida («Moviste 2 a Caja 72 h»); su entrada se deshace con ella
+  const ids = {};
+  h.forEach(function (m) { ids[m.id] = m; });
+  const visibles = h.filter(function (m) { return !(m.traspaso && m.tipo === 'ENTRADA' && ids[m.traspaso]); });
+  lista.innerHTML = visibles.slice(0, 25).map(function (m) {
+    // Solo se marca lo que no está guardado todavía o lo que falló; lo normal no lleva icono
+    const icono = m.deshecho ? '↩️' : m.estado === 'ok' ? '' : (m.estado === 'pendiente' ? '<span title="Pendiente de enviar">⏳</span>' : '⚠️');
+    const par = m.traspaso ? ids[m.traspaso] : null;
+    const donde = m.traspaso && par ? 'desde ' + m.almacen + (m.estante ? ' · ' + m.estante : '') : m.almacen + (m.estante ? ' · ' + m.estante : '');
+    return '<li><div><span class="h-que">' + esc(fraseMovimiento(m)) + '</span> · ' + esc((catalogo[m.codigo] && catalogo[m.codigo].nombre) || m.nombre || m.codigo) +
+      '<div class="meta">' + esc(donde) + ' · ' + esc(mesAnio(m.caducidad)) + ' · ' + esc(cuando(m.fecha)) +
       (m.estado !== 'ok' && m.estado !== 'pendiente' ? '<br><span class="error">' + esc(m.estado) + '</span>' : '') +
-      (m.traspaso ? '<br><span class="muted">' + esc(m.nota || 'traspaso') + '</span>' : '') +
-      (m.deshecho ? '<br><span class="muted">deshecho</span>' : '') + (m.esDeshacer ? '<br><span class="muted">corrección</span>' : '') +
+      (m.deshecho ? '<br><span class="muted">deshecho</span>' : '') +
       (sePuedeDeshacer(m) ? '<br><button class="deshacer" data-id="' + esc(m.id) + '">↩️ Deshacer</button>' : '') +
       '</div></div><div>' + icono + '</div></li>';
   }).join('');

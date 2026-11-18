@@ -405,7 +405,9 @@ test('v2.10.2: mover unidades del trastero a la Caja 72 h conserva la caducidad;
     // Deshacer desde cualquiera de las dos líneas devuelve las dos mitades
     await p.click('#t-inicio');
     await p.waitForSelector('#pantalla-inicio:not(.oculto)');
-    assert.match(await p.textContent('#lista-historial'), /Traspaso a Caja 72 h/);
+    const hist = await p.textContent('#lista-historial');
+    assert.match(hist, /Moviste 2 a Caja 72 h · Bonito del norte en migas\s*desde Trastero Ávila · Estante 5/);
+    assert.strictEqual(await p.locator('#lista-historial li').count(), 1, 'el traspaso sale en una sola línea');
     await p.evaluate(async function () { const h = (await idb.todos('historial')).find(function (m) { return m.tipo === 'SALIDA'; }); await deshacer(h.id); });
     await p.waitForFunction(function () { return !sincronizando && stockServidor.length === 2; }, null, { timeout: 15000 });
     assert.strictEqual(srv.stock['A|' + lejos + '|Caja 72 h|'], 0);
@@ -597,6 +599,61 @@ test('v2.10.5: Compra con «Todos los lugares» reparte por prioridad sin ofrece
     // Mirando solo el coche, los 2 briks que quedan en el trastero se le ofrecen a él (ya no se reservan para la Caja)
     assert.deepStrictEqual(await p.evaluate(function () { return objVista.reparto.map(function (x) { return x.cantidad + ' → ' + x.destino; }); }), ['2 → Peugeot 5008']);
     assert.match(await p.textContent('#o-comprar'), /Agua en brik\s*7 uds/);
+    assert.deepStrictEqual(a.errores, []);
+  } finally { await a.cerrar(); }
+});
+
+test('v2.10.6: Inicio con el lugar en una lista, resumen de objetivos, avisos como frases y movimientos en palabras', async function () {
+  const fila = function (id, cat, desc, cant, uni, alm) { return { id: id, categoria: cat, descripcion: desc, cantidad_objetivo: cant, unidad: uni, almacen: alm, notas: '' }; };
+  const inicial = {};
+  inicial['B|' + lejos + '|' + T + '|Estante 5'] = 4;
+  inicial['M|' + cerca + '|' + T + '|Estante 3'] = 1;
+  inicial['M|' + lejos + '|' + T + '|Estante 3'] = 2;   // el mismo producto con dos fechas cuenta una vez
+  const srv = servidorConStock(inicial, {
+    config: CONFIG_MOVER.concat([{ tipo: 'CATEGORIA', valor: 'CONSERVAS', padre: 'DESPENSA', activo: true },
+      { tipo: 'ESTANCIA', valor: 'Mochila – Comida/agua', padre: '', activo: true }]),
+    objetivos: [fila('TA-08', 'CONSERVAS', 'Atún / sardinas', 4, 'uds', T), fila('TA-07', 'CONSERVAS', 'Legumbre cocida', 20, 'uds', T),
+      fila('CJ-03', 'CONSERVAS', 'Atún / sardinas en lata', 9, 'uds', CAJA)],
+    productos: [{ codigo: 'B', nombre: 'Bonito del norte en migas', categoria: 'CONSERVAS', linea_objetivo: 'TA-08' },
+      { codigo: 'M', nombre: 'Macarrón', categoria: 'CONSERVAS', linea_objetivo: 'TA-07' }] });
+  const a = await montar({ off: function (c, rt) { return json(rt, { status: 0 }, 404); }, servidor: srv.responder });
+  try {
+    const p = a.p;
+    await p.evaluate(function () { return guardarAjustes(); });
+    await p.waitForFunction(function () { return !sincronizando && stockServidor.length === 3 && objetivos.length === 3; });
+    await p.evaluate(function () { mostrar('inicio'); return refrescarEstado(); });
+    // Lugar: una lista con los nombres enteros
+    assert.deepStrictEqual(await p.$$eval('#c-lugar option', function (o) { return o.map(function (x) { return x.textContent; }); }),
+      [T, 'Peugeot 5008', CAJA, 'Mochila'], 'nombres enteros; las tres mochilas son un solo lugar');
+    assert.strictEqual(await p.inputValue('#c-lugar'), T);
+    // Resumen de objetivos del trastero: el atún está completo (4 de 4) y la legumbre no
+    await p.waitForSelector('#i-objetivos:not(.oculto)');
+    assert.match(await p.textContent('#i-objetivos'), /Objetivos de Trastero Ávila\s*1 de 2\s*Ver qué falta/);
+    // Avisos: el macarrón cuenta una vez aunque tenga dos fechas
+    assert.match(await p.textContent('#btn-caducidades'), /1 producto caduca en 3 meses\s*Ver/);
+    // Una entrada y una salida en palabras
+    await p.evaluate(async function (x) {
+      const mk = function (id, tipo, n, min) { return { id: id, fecha: new Date(Date.now() - min * 60000).toISOString(), usuario: 'Prueba', tipo: tipo, codigo: 'B', cantidad: n, caducidad: x.lejos, almacen: x.T, estante: 'Estante 5', nota: '' }; };
+      for (const m of [mk('e1', 'ENTRADA', 2, 5), mk('s1', 'SALIDA', 1, 1)]) { await idb.poner('pendientes', m); await idb.poner('historial', Object.assign({}, m, { nombre: 'Bonito del norte en migas', estado: 'pendiente' })); }
+      await pintarHistorial();
+    }, { lejos: lejos, T: T });
+    const hist = await p.$$eval('#lista-historial li', function (li) { return li.map(function (x) { return x.textContent.replace(/\s+/g, ' ').trim(); }); });
+    assert.match(hist[0], /^Sacaste 1 · Bonito del norte en migas\s*Trastero Ávila · Estante 5 · caduca may \d{4} · hoy \d\d:\d\d/);
+    assert.match(hist[1], /^Guardaste 2 · Bonito del norte en migas/);
+    assert.doesNotMatch(hist.join(' '), /ENTRADA|SALIDA|sin cad\./);
+    if (process.env.CAPTURAS) await p.screenshot({ path: '/tmp/inicio.png' });
+    // Cambiar de lugar: el resumen pasa a ser el de la Caja; en Mochila (sin objetivos) desaparece
+    await p.selectOption('#c-lugar', CAJA);
+    await p.waitForFunction(function () { return /Caja 72 h/.test(document.getElementById('i-objetivos').textContent); });
+    assert.strictEqual(await p.evaluate(function () { return ajustes.grupo; }), CAJA, 'se recuerda el lugar elegido');
+    await p.selectOption('#c-lugar', 'Mochila');
+    await p.waitForFunction(function () { return document.getElementById('i-objetivos').classList.contains('oculto'); });
+    // Tocar el resumen abre Objetivos en ese lugar
+    await p.selectOption('#c-lugar', T);
+    await p.waitForSelector('#i-objetivos:not(.oculto)');
+    await p.click('#i-objetivos');
+    await p.waitForSelector('#pantalla-objetivos:not(.oculto)');
+    assert.strictEqual(await p.evaluate(function () { return objVista.modo + ' ' + objVista.almacen; }), 'categorias ' + T);
     assert.deepStrictEqual(a.errores, []);
   } finally { await a.cerrar(); }
 });

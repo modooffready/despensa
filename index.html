@@ -13,7 +13,7 @@
   body { margin:0; font-family:system-ui,-apple-system,Roboto,sans-serif; background:var(--fondo); color:var(--texto); font-size:17px; }
   .cabecera { position:sticky; top:0; z-index:5; }
   header { background:var(--verde); color:#fff; padding:12px 16px; display:flex; align-items:center; justify-content:space-between; }
-  .deshacer { border:1px solid var(--rojo); background:#fff; color:var(--rojo); border-radius:8px; padding:4px 8px; font-size:13px; margin-top:4px; }
+  .deshacer { border:1px solid #d9d2c2; background:#fff; color:#1f2a22; border-radius:10px; min-height:44px; padding:0 14px; font-size:14px; font-weight:600; margin-top:6px; }
   .deshacer.confirmar { background:var(--rojo); color:#fff; }
   .pf-hist { margin-top:12px; }
   .pf-hist b { font-size:13px; color:var(--gris); text-transform:uppercase; letter-spacing:.05em; }
@@ -111,6 +111,19 @@
   .pronto { color:#a86a00; font-weight:700; }
   .codigo { font-family:monospace; color:var(--gris); }
   .contexto { padding:8px; }
+  /* Inicio: lugar en una lista con el nombre entero, resumen de objetivos y avisos como frases */
+  .c-etiqueta { display:block; font-size:13px; color:var(--gris); margin:0 0 4px 2px; }
+  #c-lugar { font-size:17px; font-weight:600; margin-bottom:8px; }
+  .i-obj { display:block; width:100%; text-align:left; border:0; font:inherit; color:inherit; cursor:pointer; }
+  .i-obj .i-cab { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .i-obj .i-cab b { font-size:16px; }
+  .i-obj .i-ver { display:block; margin-top:6px; color:var(--verde); font-weight:600; font-size:14px; }
+  .aviso { display:flex; justify-content:space-between; align-items:center; gap:10px; width:100%; min-height:48px; margin:0 0 8px; padding:8px 14px; border:0; border-radius:12px; font:inherit; font-size:15px; font-weight:600; text-align:left; }
+  .aviso b { flex:none; }
+  .aviso-grave { background:#b3261e; color:#fff; }
+  .aviso-rojo { background:#f3d8d6; color:#8c1d16; }
+  .aviso-ambar { background:#f6e7c8; color:#6b4507; }
+  .historial .h-que { font-weight:600; }
   .c-grupos { display:flex; gap:4px; margin-bottom:6px; }
   .c-grupos button { flex:1 1 0; min-width:0; border:1px solid var(--verde); background:#fff; color:var(--verde); border-radius:10px; padding:9px 2px; font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .c-grupos button.activo { background:var(--verde); color:#fff; }
@@ -199,16 +212,18 @@
     </div>
 
     <div class="tarjeta contexto">
-      <div id="c-grupos" class="c-grupos" aria-label="Dónde estás"></div>
+      <label for="c-lugar" class="c-etiqueta">Estás en</label>
+      <select id="c-lugar"></select>
       <div class="segmentado peq" aria-label="Qué vas a meter o sacar">
         <button id="c-DESPENSA">🥫 Despensa</button>
         <button id="c-MATERIAL">🧰 Material</button>
       </div>
     </div>
 
-    <button class="btn btn-sec oculto" id="btn-revision" style="background:#b3261e;color:#fff"></button>
-    <button class="btn btn-sec oculto" id="btn-caducidades" style="background:#f3d8d6;color:#b3261e"></button>
-    <button class="btn btn-sec oculto" id="btn-incompletos" style="background:#f6e7c8;color:#7a5410"></button>
+    <button class="tarjeta i-obj oculto" id="i-objetivos"></button>
+    <button class="aviso aviso-grave oculto" id="btn-revision"></button>
+    <button class="aviso aviso-rojo oculto" id="btn-caducidades"></button>
+    <button class="aviso aviso-ambar oculto" id="btn-incompletos"></button>
     <button class="btn btn-principal" id="btn-escanear">📷 Escanear</button>
     <div class="fila">
       <input id="codigo-manual" type="search" enterkeyhint="search" placeholder="🔎 Busca: choco, atún, pilas…">
@@ -500,6 +515,6 @@
   <button id="t-objetivos"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="5"></circle><circle cx="12" cy="12" r="1"></circle></svg></span>Objetivos</button>
   <button id="t-compra"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h2l2.5 12h10L20 7H6.5"></path><circle cx="9" cy="20" r="1.5"></circle><circle cx="17" cy="20" r="1.5"></circle></svg></span>Compra</button>
 </nav>
-<script src="app.js?v=2.10.5"></script>
+<script src="app.js?v=2.10.6"></script>
 </body>
 </html>
