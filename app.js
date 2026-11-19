@@ -5,7 +5,7 @@
  * Listas (categorías, estancias, ubicaciones) vienen de la pestaña Config.
  * ========================================================= */
 
-const VERSION = '2.10.7';
+const VERSION = '2.10.8';
 const FORMATOS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code'];
 const UNIDADES = ['uds', 'kg', 'g', 'litros', 'ml', 'rollos', 'paquetes'];
 const MAX_HISTORIAL = 200;
@@ -298,8 +298,9 @@ function enlazarEventos() {
   $('o-compartir').onclick = function () { compartirLista(false); };
   $('o-keep').onclick = function () { compartirLista(true); };
   $('o-lugar').onchange = function () {
-    objVista.compraTodos = $('o-lugar').value === TODOS;
-    if (!objVista.compraTodos) objVista.almacen = $('o-lugar').value;
+    const v = $('o-lugar').value;
+    if (objVista.modo === 'compra') objVista.compraTodos = v === TODOS;
+    if (v !== TODOS) objVista.almacen = v;
     pintarObjetivos();
   };
   $('i-volver').onclick = abrirStock;
@@ -2141,24 +2142,20 @@ function barra(a) { return '<div class="barra"><i style="width:' + Math.round(a 
 
 function pintarObjetivos() {
   const alms = almacenesObjetivos();
-  $('o-almacenes').innerHTML = alms.length > 1 ? alms.map(function (a) {
-    return '<button class="chip' + (a === objVista.almacen ? ' activo' : '') + '" data-a="' + esc(a) + '">' + esc(a) + '</button>';
-  }).join('') : '';
-  cada($('o-almacenes').children, function (b) { b.onclick = function () { objVista.almacen = b.dataset.a; pintarObjetivos(); }; });
   const enCompra = objVista.modo === 'compra';
   $('o-titulo').textContent = enCompra ? '🛒 Compra' : '🎯 Objetivos';
-  // En Compra el lugar se elige en una lista (nombres enteros, y la opción «Todos los lugares»); en Objetivos, con botones
-  $('o-almacenes').classList.toggle('oculto', enCompra);
-  $('o-lugar-caja').classList.toggle('oculto', !enCompra || !alms.length);
+  // El lugar se elige en una lista con el nombre entero. Solo Compra tiene «Todos los lugares».
+  $('o-lugar-caja').classList.toggle('oculto', !alms.length);
+  $('o-lugar-txt').textContent = enCompra ? '¿Para qué lugar?' : '¿Qué lugar?';
   $('o-resumen').classList.toggle('oculto', enCompra);
   $('o-avisos').classList.toggle('oculto', enCompra);
+  opciones($('o-lugar'), alms);
   if (enCompra) {
-    opciones($('o-lugar'), alms);
     const todos = document.createElement('option');
     todos.value = TODOS; todos.textContent = 'Todos los lugares';
     $('o-lugar').insertBefore(todos, $('o-lugar').firstChild);
-    $('o-lugar').value = objVista.compraTodos ? TODOS : objVista.almacen;
   }
+  $('o-lugar').value = enCompra && objVista.compraTodos ? TODOS : objVista.almacen;
   pintarNav();
 
   if (!objetivos.length) {
@@ -2170,15 +2167,17 @@ function pintarObjetivos() {
   const conObj = r.lineas.filter(function (l) { return l.objetivo > 0; });
   const completas = conObj.filter(function (l) { return l.completa; }).length;
   const sinCant = r.lineas.length - conObj.length;
-  $('o-resumen').innerHTML = '<b>' + esc(objVista.almacen) + '</b> · ' + completas + ' de ' + conObj.length + (conObj.length === 1 ? ' objetivo completo' : ' objetivos completos') +
-    '<br><span style="font-size:13px">Solo cuenta lo guardado aquí. Lo caducado no cuenta.</span>';
+  const avanceTotal = conObj.length ? completas / conObj.length : 0;
+  $('o-resumen').innerHTML = '<div class="o-total"><b class="o-big">' + completas + '</b> de ' + conObj.length +
+    (conObj.length === 1 ? ' objetivo completo' : ' objetivos completos') + '</div>' + barra(avanceTotal) +
+    '<div class="muted">Cuenta lo guardado en este lugar y sin caducar.</div>';
 
   // Avisos: productos con stock aquí que no cuentan para ninguna línea
   const n = r.sinLinea.length;
   let av = '';
   if (n) {
-    av = '<button class="chip" id="o-ver-sin">⚠️ ' + n + (n === 1 ? ' producto' : ' productos') +
-      ' sin subcategoría · ' + (objVista.verSinLinea ? 'Ocultar' : 'Ver') + '</button>';
+    av = '<button class="aviso aviso-ambar" id="o-ver-sin"><span>' + n + (n === 1 ? ' producto sin subcategoría' : ' productos sin subcategoría') +
+      '</span><b>' + (objVista.verSinLinea ? 'Ocultar' : 'Asignar') + '</b></button>';
     if (objVista.verSinLinea) {
       av += '<div class="tarjeta" style="margin-top:8px"><p class="muted" style="margin-top:0">Mientras no tengan subcategoría no cuentan para ningún objetivo. Toca cada uno y elígela en su ficha; si no encaja en ninguna, usa «Varios».</p>' +
         r.sinLinea.map(function (x) {
@@ -2248,11 +2247,16 @@ function pintarObjetivos() {
     $('o-compra').classList.add('oculto');
     $('o-lista').innerHTML = r.categorias.map(function (c) {
       const abierta = !!objVista.abiertas[c.categoria];
-      let h = '<div class="prod o-cat" style="border-left:5px solid ' + (COLOR_CAT[c.categoria] || 'var(--verde)') + '">' +
-        '<div class="prod-cab o-cab" data-cat="' + esc(c.categoria) + '"><span>' + (ICONO_CAT[c.categoria] || '') + ' ' + esc(bonito(c.categoria)) + '</span>' +
-        '<span class="muted">' + (c.conObjetivo ? c.completas + ' de ' + c.conObjetivo : 'sin objetivo') + ' ' + (abierta ? '▴' : '▾') + '</span></div>' +
+      const color = COLOR_CAT[c.categoria] || '#5b635d';
+      const llena = c.conObjetivo && c.completas === c.conObjetivo;
+      let h = '<div class="prod o-cat">' +
+        '<div class="o-cat-cab o-cab" data-cat="' + esc(c.categoria) + '">' +
+        '<span class="o-cat-ico" style="background:' + color + '22;color:' + color + '">' + (ICONO_CAT[c.categoria] || '📦') + '</span>' +
+        '<span class="o-cat-nom">' + esc(bonito(c.categoria)) + '</span>' +
+        '<span class="o-cat-cuenta">' + (c.conObjetivo ? (llena ? '✅ ' : '') + '<b>' + c.completas + '</b> de ' + c.conObjetivo : '<span class="muted">sin objetivo</span>') +
+        ' <span class="muted">' + (abierta ? '▴' : '▾') + '</span></span></div>' +
         (c.conObjetivo ? barra(c.avance) : '');
-      if (c.sinLinea.length) h += '<div class="lote pronto">⚠️ ' + c.sinLinea.length + ' sin subcategoría</div>';
+      if (c.sinLinea.length) h += '<div class="o-cat-sin">' + c.sinLinea.length + (c.sinLinea.length === 1 ? ' producto sin subcategoría' : ' productos sin subcategoría') + '</div>';
       if (abierta) {
         h += c.lineas.map(function (l) {
           const avisos = [];

@@ -197,6 +197,17 @@
   .barra { height:8px; background:#ece6d9; border-radius:9px; overflow:hidden; margin-top:6px; }
   .barra i { display:block; height:100%; border-radius:9px; }
   .o-cab { cursor:pointer; }
+  #o-resumen .o-total { font-size:17px; font-weight:600; }
+  #o-resumen .o-big { font-size:34px; font-weight:800; color:var(--verde); margin-right:2px; }
+  #o-resumen .barra { height:12px; margin:8px 0 6px; }
+  #o-resumen .muted { font-size:13px; }
+  .o-cat-cab { display:flex; align-items:center; gap:12px; }
+  .o-cat-ico { width:40px; height:40px; border-radius:10px; flex:none; display:flex; align-items:center; justify-content:center; font-size:20px; }
+  .o-cat-nom { flex:1; font-weight:600; font-size:16px; }
+  .o-cat-cuenta { white-space:nowrap; font-size:15px; }
+  .o-cat-cuenta b { font-size:17px; }
+  .o-cat .barra { margin-top:10px; }
+  .o-cat-sin { margin-top:8px; font-size:13px; color:#6b4507; }
   .o-linea { border-top:1px solid #f0ebe0; margin-top:10px; padding-top:8px; font-size:15px; }
   .o-prods { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
   .o-prod { border:1px solid #e4dccd; background:#faf7f0; border-radius:8px; padding:4px 8px; font-size:13px; text-align:left; margin:2px 4px 2px 0; }
@@ -391,13 +402,12 @@
   <section id="pantalla-objetivos" class="oculto">
     <div class="tarjeta">
       <h2 id="o-titulo">🎯 Objetivos</h2>
-      <div class="chips" id="o-almacenes" style="margin:6px 0"></div>
       <div id="o-lugar-caja" class="oculto">
-        <label for="o-lugar">¿Para qué lugar?</label>
+        <label for="o-lugar" id="o-lugar-txt">¿Para qué lugar?</label>
         <select id="o-lugar"></select>
       </div>
-      <div class="muted" id="o-resumen"></div>
     </div>
+    <div class="tarjeta" id="o-resumen"></div>
     <div id="o-avisos" style="margin-bottom:8px"></div>
     <div id="o-lista"></div>
     <div id="o-compra" class="oculto">
@@ -534,6 +544,6 @@
   <button id="t-objetivos"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="5"></circle><circle cx="12" cy="12" r="1"></circle></svg></span>Objetivos</button>
   <button id="t-compra"><span class="nav-ico"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h2l2.5 12h10L20 7H6.5"></path><circle cx="9" cy="20" r="1.5"></circle><circle cx="17" cy="20" r="1.5"></circle></svg></span>Compra</button>
 </nav>
-<script src="app.js?v=2.10.7"></script>
+<script src="app.js?v=2.10.8"></script>
 </body>
 </html>

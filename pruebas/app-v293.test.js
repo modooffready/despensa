@@ -474,7 +474,7 @@ test('v2.10.3: Compra propone primero qué pasar del trastero a la Caja 72 h y d
     assert.strictEqual(await p.locator('#o-reparto .o-hecho').count(), 0);
     assert.match(await p.textContent('#o-texto'), /Atún \/ sardinas \/ caballa en lata: faltan 17 uds \(hay 13 de 30\)/);
     // En la Caja 72 h: primero lo que se puede traer
-    assert.ok(!(await p.isVisible('#o-almacenes')) && !(await p.isVisible('#o-resumen')), 'Compra no repite los botones ni el resumen de Objetivos');
+    assert.ok(!(await p.isVisible('#o-resumen')), 'Compra no repite el resumen de Objetivos');
     await p.selectOption('#o-lugar', 'Caja 72 h');
     await p.waitForSelector('#o-reparto .o-hecho');
     const sug = await p.evaluate(function () { return objVista.reparto.map(function (x) { return x.cantidad + ' ' + x.codigo + ' ' + x.lote.caducidad + ' ' + x.linea.o.id; }); });
@@ -526,7 +526,7 @@ test('v2.10.4: Compra no se rompe con datos raros de la hoja (nombre numérico, 
     // Primero Objetivos con una categoría abierta (lo que tenía Sergio en pantalla), después Compra de la Caja
     await p.click('#t-objetivos');
     await p.waitForSelector('#pantalla-objetivos:not(.oculto)');
-    await p.click('#o-almacenes .chip[data-a="Caja 72 h"]');
+    await p.selectOption('#o-lugar', 'Caja 72 h');
     await p.click('.o-cab[data-cat="CONSERVAS"]');
     await p.click('#t-compra');
     await p.waitForSelector('#o-compra:not(.oculto)');
@@ -725,6 +725,69 @@ test('v2.10.7: Stock con filtros en listas, caducidad en palabras y en color, y 
     await p.selectOption('#s-lugar', T);
     await p.click('#s-lista .prod >> nth=0');
     await p.waitForSelector('#ficha-sheet.on');
+    assert.deepStrictEqual(a.errores, []);
+  } finally { await a.cerrar(); }
+});
+
+test('v2.10.8: Objetivos con el lugar en una lista, resumen grande con barra, aviso con «Asignar» y tarjetas limpias', async function () {
+  const fila = function (id, cat, desc, cant, uni, alm) { return { id: id, categoria: cat, descripcion: desc, cantidad_objetivo: cant, unidad: uni, almacen: alm, notas: '' }; };
+  const inicial = {};
+  inicial['A|' + lejos + '|' + T + '|Estante 5'] = 6;
+  inicial['S|' + lejos + '|' + T + '|Estante 5'] = 2;
+  inicial['X|' + lejos + '|' + T + '|Estante 5'] = 1;          // sin subcategoría
+  inicial['D|' + lejos + '|' + CAJA + '|'] = 3;
+  const srv = servidorConStock(inicial, {
+    config: CONFIG_MOVER.concat([{ tipo: 'CATEGORIA', valor: 'CONSERVAS', padre: 'DESPENSA', activo: true },
+      { tipo: 'CATEGORIA', valor: 'BEBIDA', padre: 'DESPENSA', activo: true }]),
+    objetivos: [fila('TB-01', 'BEBIDA', 'Agua en brik', 6, 'uds', T), fila('TA-08', 'CONSERVAS', 'Atún en lata', 30, 'uds', T), fila('TA-09', 'CONSERVAS', 'Legumbre en bote', 10, 'uds', T),
+      fila('CJ-03', 'CONSERVAS', 'Atún en lata', 3, 'uds', CAJA)],
+    productos: [{ codigo: 'A', nombre: 'Agua', categoria: 'BEBIDA', linea_objetivo: 'TB-01' },
+      { codigo: 'S', nombre: 'Sardinas', categoria: 'CONSERVAS', linea_objetivo: 'TA-08' },
+      { codigo: 'X', nombre: 'Mejillones', categoria: 'CONSERVAS' },
+      { codigo: 'D', nombre: 'Atún claro', categoria: 'CONSERVAS', linea_objetivo: 'CJ-03' }] });
+  const a = await montar({ off: function (c, rt) { return json(rt, { status: 0 }, 404); }, servidor: srv.responder });
+  try {
+    const p = a.p;
+    await p.evaluate(function () { return guardarAjustes(); });
+    await p.waitForFunction(function () { return !sincronizando && objetivos.length === 4 && stockServidor.length === 4; });
+    await p.click('#t-objetivos');
+    await p.waitForSelector('#pantalla-objetivos:not(.oculto)');
+    // Lugar en una lista con el nombre entero y sin «Todos los lugares»
+    assert.ok(await p.isVisible('#o-lugar'));
+    assert.strictEqual(await p.textContent('#o-lugar-txt'), '¿Qué lugar?');
+    assert.deepStrictEqual(await p.$$eval('#o-lugar option', function (o) { return o.map(function (x) { return x.textContent; }); }), [T, CAJA]);
+    assert.strictEqual(await p.inputValue('#o-lugar'), T);
+    // Resumen grande con su barra
+    assert.strictEqual((await p.textContent('#o-resumen .o-total')).trim(), '1 de 3 objetivos completos');
+    assert.strictEqual(await p.textContent('#o-resumen .o-big'), '1');
+    assert.strictEqual(await p.$eval('#o-resumen .barra i', function (e) { return e.style.width; }), '33%');
+    // Aviso como frase con el botón Asignar, que abre la lista
+    assert.strictEqual((await p.textContent('#o-ver-sin')).trim(), '1 producto sin subcategoríaAsignar');
+    await p.click('#o-ver-sin');
+    await p.waitForSelector('#o-avisos .o-editar[data-c="X"]');
+    assert.match(await p.textContent('#o-ver-sin'), /Ocultar$/);
+    // Tarjetas: icono, nombre y «N de M»; la completa lleva ✅
+    const cab = await p.$$eval('#o-lista .o-cat-cab', function (d) { return d.map(function (x) { return x.querySelector('.o-cat-nom').textContent + ' | ' + x.querySelector('.o-cat-cuenta').textContent.replace(/\s+/g, ' ').trim(); }); });
+    assert.deepStrictEqual(cab, ['Bebida | ✅ 1 de 1 ▾', 'Conservas | 0 de 2 ▾']);
+    assert.match(await p.textContent('#o-lista'), /1 producto sin subcategoría/);
+    if (process.env.CAPTURAS) await p.screenshot({ path: '/tmp/objetivos-v2108.png', fullPage: true });
+    await p.click('.o-cab[data-cat="CONSERVAS"]');
+    assert.match(await p.textContent('#o-lista'), /Atún en lata\s*2 \/ 30/);
+    // Cambiar de lugar con la lista
+    await p.selectOption('#o-lugar', CAJA);
+    await p.waitForFunction(function () { return objVista.almacen === 'Caja 72 h'; });
+    assert.strictEqual((await p.textContent('#o-resumen .o-total')).trim(), '1 de 1 objetivo completo');
+    // En Compra la misma lista lleva «Todos los lugares» y no se ve el resumen
+    await p.click('#t-compra');
+    await p.waitForSelector('#o-compra:not(.oculto)');
+    assert.strictEqual(await p.textContent('#o-lugar-txt'), '¿Para qué lugar?');
+    assert.strictEqual(await p.$eval('#o-lugar option', function (o) { return o.textContent; }), 'Todos los lugares');
+    assert.ok(!(await p.isVisible('#o-resumen')));
+    // Volver a Objetivos no arrastra «Todos los lugares»
+    await p.selectOption('#o-lugar', '__todos__');
+    await p.click('#t-objetivos');
+    await p.waitForFunction(function () { return objVista.modo === 'categorias' && !document.getElementById('o-resumen').classList.contains('oculto'); });
+    assert.strictEqual(await p.inputValue('#o-lugar'), CAJA);
     assert.deepStrictEqual(a.errores, []);
   } finally { await a.cerrar(); }
 });
